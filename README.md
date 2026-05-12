@@ -1,196 +1,205 @@
-[![Version](https://vsmarketplacebadges.dev/version-short/orangex4.hsnips.png)](https://marketplace.visualstudio.com/items?itemName=orangex4.hsnips)
-[![Rating](https://vsmarketplacebadges.dev/rating-short/orangex4.hsnips.png)](https://marketplace.visualstudio.com/items?itemName=orangex4.hsnips)
-[![Installs](https://vsmarketplacebadges.dev/installs/orangex4.hsnips.png)](https://marketplace.visualstudio.com/items?itemName=orangex4.hsnips)
+# Yiqi's LatexSnips
 
-# HyperSnips for Math
+Yiqi's LatexSnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展。项目基于 HyperSnips，保留了类似 UltiSnips 的可编程 snippet 语法，并针对 Markdown / LaTeX 写作增加了数学环境识别和 `${VISUAL}` 选中文本替换能力。
 
-这是一个由 [OrangeX4]() 魔改过的 HyperSnips, 增加了**对 Markdown 和 Latex 中数学环境匹配** 的功能. 并且加入了 `${VISUAL}` 语法的支持.
+仓库地址：<https://github.com/yiqiyang33/Yiqi-s-LatexSnips>
 
-GitHub 地址: https://github.com/OrangeX4/hsnips
+> 如果已经安装原版 HyperSnips，建议先禁用或卸载。两个扩展会注册相近的命令和 snippet 行为，同时启用时容易互相干扰。
 
-**使用这个插件前, 请把原来的 HyperSnips 插件删除!**
-**使用这个插件前, 请把原来的 HyperSnips 插件删除!**
-**使用这个插件前, 请把原来的 HyperSnips 插件删除!**
+## 功能特性
 
-并且 **开启** 在 markdown 下的 **自动补全提示**, 请使用 `Shift + Ctrl + P` 然后输入 `open settings json` 打开配置文件, 然后加入以下部分:
+- 使用 `.hsnips` 文件管理 snippet。
+- 支持普通触发词、正则触发词、Tabstop、优先级和 JavaScript 插值。
+- 支持 `A` 自动展开 flag。
+- 支持 `m` 数学环境限定 flag。
+- 能识别 `$...$`、`$$...$$`、`\(...\)`、`\[...\]`、`equation`、`align`、`gather` 等数学环境。
+- 在 `\text{}`、`\operatorname{}`、`\mathrm{}`、`\label{}`、`\tag{}` 等非数学输入位置避免误触发。
+- 在 `align`、矩阵、`cases`、`array`、`tabular` 等环境中按 Enter，可自动给当前行补 `\\` 后换行。
+- 在 `align`、矩阵、`cases`、`array`、`tabular` 等环境中按 Tab，可优先插入列分隔符 ` & `。
+- 支持 `${VISUAL}`，可把最近选中的文本带入 snippet。
+- 为 `.hsnips` 文件提供语法高亮。
+
+## 快速开始
+
+1. 在命令面板运行 `Yiqi's LatexSnips: Open Snippets Directory`。
+2. 在打开的目录中新建目标语言对应的 snippet 文件，例如：
+   - `markdown.hsnips`：用于 Markdown。
+   - `latex.hsnips`：用于 LaTeX。
+   - `all.hsnips`：用于所有语言。
+3. 写入 snippet 并保存。保存 `.hsnips` 文件后，扩展会自动重新加载 snippets。
+
+Markdown 默认可能不会弹出补全提示。建议在 VS Code 的 `settings.json` 中加入：
 
 ```json
 "[markdown]": {
-    "editor.quickSuggestions": true
-},
+  "editor.quickSuggestions": true
+}
 ```
 
-**安装完成后**, 按下快捷键 `Ctrl + Shift + P`, 输入命令 `Open Snippets Directory`, 就可以打开一个文件夹. 在 **该文件夹** 新建一个文件 `markdown.hsnips`, 并将 [OrangeX4's hsnips](https://github.com/OrangeX4/OrangeX4-HyperSnips/blob/main/markdown.hsnips) 里面的内容输入进去, 保存, 就可以使用了.
+## Snippet 目录
 
-先看个 **普通例子**:
+默认 snippet 目录如下：
 
-```hsnips
-snippet RR "R" iAm
-\mathbb{R}
-endsnippet
-```
+- Windows：`%APPDATA%\Code\User\hsnips\(language).hsnips`
+- macOS：`$HOME/Library/Application Support/Code/User/hsnips/(language).hsnips`
+- Linux：`$HOME/.config/Code/User/hsnips/(language).hsnips`
 
-这是一个在数学环境中自动展开的 Snippet, 它有三个标示符 `iAm`, 分别代表 "在词语内部也会触发", "自动展开" 和 "数学环境".
+也可以通过 `hsnips.windows`、`hsnips.mac`、`hsnips.linux` 配置项自定义路径。
 
-这个例子会在数学环境内, 自动将 `RR` 展开成为 `\mathbb{R}`, 代表 "实数".
+## 基本语法
 
-再看个 **正则表达式** 的例子:
-
-``` hsnips
-snippet `((\d+)|(\d*)(\\)?([A-Za-z]+)((\^|_)(\{\d+\}|\d))*)/` "Fraction no ()" Am
-\frac{``rv = m[1]``}{$1}$0
-endsnippet
-```
-
-其中 `rv = m[1]` 是 JavaScript 代码, 表示将正则表达式的第一个组 `m[1]` 输出给 "返回值" `rv`, 然后输出出去.
-
-这是一个在数学环境中自动展开的 Snippet, 它有两个标示符 'Am', 分别代表 '自动展开' 和 '数学环境'. 用处是:
-
-```
-1/    --->    \frac{1}{}
-```
-
-相比于原来的 HyperSnips, 最大特点是, 它只会在数学环境 `$...$`, `$$...$$`, `\(...\)` 和 `\[...\]` 中自动展开!
-
-**还有 `${VISUAL}` 语法:**
-
-```
-snippet fr "frac" iAm
-\\frac{${1:${VISUAL}}}{$2}
-endsnippet
-```
-
-这个语法会保存最近选中的内容 (5 秒内), 然后替换掉 `${VISUAL}` 部分.
-
-以下是原来的 `README.md`:
-
----
-
-![](https://github.com/OrangeX4/hsnips/raw/HEAD/images/welcome.gif)
-
-HyperSnips is a snippet engine for vscode heavily inspired by vim's
-[UltiSnips](https://github.com/SirVer/ultisnips).
-
-## Usage
-
-To use HyperSnips you create `.hsnips` files on a directory which depends on your platform:
-
-- Windows: `%APPDATA%\Code\User\hsnips\(language).hsnips`
-- Mac: `$HOME/Library/Application Support/Code/User/hsnips/(language).hsnips`
-- Linux: `$HOME/.config/Code/User/hsnips/(language).hsnips`
-
-Or alternatively, you can open this directory by running the command `HyperSnips: Open snippets directory`.
-
-Additionally, you can create an `all.hsnips` file for snippets that should be available on all languages.
-
-### Snippets file
-
-A snippets file is a file with the `.hsnips` extension, the file is composed of two types of blocks:
-global blocks and snippet blocks.
-
-Global blocks are JavaScript code blocks with code that is shared between all the snippets defined
-in the current file. They are defined with the `global` keyword, as follows:
+一个 `.hsnips` 文件可以包含 `global` JavaScript 代码块和多个 `snippet` 代码块：
 
 ```hsnips
 global
-// JavaScript code
+// 当前文件内所有 snippet 可共享的 JavaScript 代码
 endglobal
-```
 
-Snippet blocks are snippet definitions. They are defined with the `snippet` keyword, as follows:
-
-```hsnips
 snippet trigger "description" flags
 body
 endsnippet
 ```
 
-where the `trigger` field is required and the fields `description` and `flags` are optional.
-
-### Trigger
-
-A trigger can be any sequence of characters which does not contain a space, or a regular expression
-surrounded by backticks (`` ` ``).
-
-### Flags
-
-The flags field is a sequence of characters which modify the behavior of the snippet, the available
-flags are the following:
-
-- `A`: Automatic snippet expansion - Usually snippets are activated when the `tab` key is pressed,
-  with the `A` flag snippets will activate as soon as their trigger matches, it is specially useful
-  for regex snippets.
-
-- `i`: In-word expansion\* - By default, a snippet trigger will only match when the trigger is
-  preceded by whitespace characters. A snippet with this option is triggered regardless of the
-  preceding character, for example, a snippet can be triggered in the middle of a word.
-
-- `w`: Word boundary\* - With this option the snippet trigger will match when the trigger is a word
-  boundary character. Use this option, for example, to permit expansion where the trigger follows
-  punctuation without expanding suffixes of larger words.
-
-- `b`: Beginning of line expansion\* - A snippet with this option is expanded only if the
-  tab trigger is the first word on the line. In other words, if only whitespace precedes the tab
-  trigger, expand.
-
-- `M`: Multi-line mode - By default, regex matches will only match content on the current line, when
-  this option is enabled the last `hsnips.multiLineContext` lines will be available for matching.
-
-- `m`: Math mode
-
-\*: This flag will only affect snippets which have non-regex triggers.
-
-### Snippet body
-
-The body is the text that will replace the trigger when the snippet is expanded, as in usual
-snippets, the tab stops `$1`, `$2`, etc. are available.
-
-The full power of HyperSnips comes when using JavaScript interpolation: you can have code blocks
-inside your snippet delimited by two backticks (` `` `) that will run when the snippet is expanded,
-and every time the text in one of the tab stops is changed.
-
-### Code interpolation
-
-Inside the code interpolation, you have access to a few special variables:
-
-- `rv`: The return value of your code block, the value of this variable will replace the code block
-  when the snippet is expanded.
-- `t`: An array containing the text within the tab stops, in the same order as the tab stops are
-  defined in the snippet block. You can use it to dynamically change the snippet content.
-- `m`: An array containing the match groups of your regular expression trigger, or an empty array if
-  the trigger is not a regular expression.
-- `w`: A URI string of the currently opened workspace, or an empty string if no workspace is open.
-- `path`: A URI string of the current document. (untitled documents have the scheme `untitled`)
-
-Additionally, every variable defined in one code block will be available in all the subsequent code
-blocks in the snippet.
-
-The `require` function can also be used to import NodeJS modules.
-
-## Examples
-
-- Simple snippet which greets you with the current date and time
+`trigger` 可以是普通字符串，也可以是用反引号包裹的正则表达式。正则触发词如果没有以 `$` 结尾，解析时会自动补上行尾匹配。
 
 ```hsnips
-snippet dategreeting "Gives you the current date!"
-Hello from your hsnip at ``rv = new Date().toDateString()``!
+snippet RR "Real numbers" iAm
+\mathbb{R}
 endsnippet
 ```
 
-- Box snippet as shown in the gif above
+在数学环境中输入 `RR`，会自动展开为 `\mathbb{R}`。
+
+## Flags
+
+`flags` 写在 snippet 描述后面，用来控制触发行为：
+
+- `A`：自动展开，触发词匹配后立即展开。
+- `i`：允许在单词内部展开。
+- `w`：按 word boundary 匹配。
+- `b`：只在行首展开。
+- `M`：启用多行正则匹配。
+- `m`：只在数学环境中展开。
+
+其中 `i`、`w`、`b` 主要用于普通字符串触发词；正则 snippet 常用 `A`、`M`、`m`。
+
+## JavaScript 插值
+
+snippet body 中可以用两个反引号包裹 JavaScript 代码。代码会在展开时执行，也会在相关 tabstop 内容变化时重新计算。
 
 ```hsnips
-snippet box "Box" A
-``rv = '┌' + '─'.repeat(t[0].length + 2) + '┐'``
-│ $1 │
-``rv = '└' + '─'.repeat(t[0].length + 2) + '┘'``
+snippet dategreeting "Current date"
+Today is ``rv = new Date().toDateString()``.
 endsnippet
 ```
 
-- Snippet to insert the current filename
+插值代码中可使用的变量：
+
+- `rv`：返回值，会替换当前插值位置。
+- `t`：tabstop 内容数组。
+- `m`：正则触发词的匹配结果数组。
+- `w`：当前 workspace URI。
+- `path`：当前文档 URI。
+
+同一个 snippet 内，前一个插值块中定义的变量可以被后续插值块继续使用。代码块中也可以使用 Node.js 的 `require`。
+
+## 正则展开示例
 
 ```hsnips
-snippet filename "Current Filename"
-``rv = require('path').basename(path)``
+snippet `((\d+)|(\d*)(\\)?([A-Za-z]+)((\^|_)(\{\d+\}|\d))*)/` "Fraction" Am
+\frac{``rv = m[1]``}{$1}$0
 endsnippet
 ```
+
+在数学环境中输入 `1/`，会展开为：
+
+```tex
+\frac{1}{}
+```
+
+这里的 `A` 表示自动展开，`m` 表示只在数学环境中生效。
+
+## 多行公式辅助
+
+在 `align`、`align*`、`aligned`、`gather`、矩阵、`cases`、`array`、`tabular` 等多行/分列环境中，按 Enter 会自动处理换行：
+
+```tex
+\begin{align}
+a &= b
+% 按 Enter 后变为：
+a &= b \\
+
+\end{align}
+```
+
+以下情况只执行普通换行，不会重复补 `\\`：
+
+- 当前行为空。
+- 当前行只有 `\begin{...}` 或 `\end{...}`。
+- 当前行已经以 `\\` 结尾。
+- 光标右侧还有非空内容。
+
+在矩阵类环境中，按 Tab 会插入 ` & `，用于快速切换到下一列：
+
+```tex
+\begin{bmatrix}
+a & b \\
+c & d
+\end{bmatrix}
+```
+
+当前支持 Tab 插入 ` & ` 的环境包括 `align`、`align*`、`aligned`、`alignedat`、`matrix`、`pmatrix`、`bmatrix`、`Bmatrix`、`vmatrix`、`Vmatrix`、`smallmatrix`、`cases`、`array`、`tabular`、`tabular*`、`tabularx`、`longtable`。
+
+在这些环境中，Tab 会优先插入 ` & `，不会被 snippet placeholder 跳转抢走；这对矩阵 snippet 展开后光标停在空单元格行的情况也生效。如果当前行不适合插入 ` & `，例如 `\begin{...}` / `\end{...}` 行、已经以 `\\` 结尾的行、注释中或 Markdown 代码块中，则退回默认 Tab/snippet 行为。
+
+如果修改或本地编译后按键行为没有变化，先执行 `npm run compile`，然后在 VS Code / Cursor 中运行 `Developer: Reload Window`。按键绑定和 `out/` 编译产物都需要重新加载后才会被当前扩展实例使用。
+
+Enter 逻辑同时带有文档变更兜底：如果其他扩展或编辑器模式先把 Enter 处理成了普通换行，扩展会在换行后立即检查上一行并补上缺失的 `\\`。
+
+## `${VISUAL}`
+
+`${VISUAL}` 会替换为最近 5 秒内选中的文本，适合用来包裹已有公式片段。
+
+```hsnips
+snippet fr "Fraction" iAm
+\frac{${1:${VISUAL}}}{$2}
+endsnippet
+```
+
+例如先选中 `x+y`，再在数学环境中输入 `fr`，可以得到：
+
+```tex
+\frac{x+y}{}
+```
+
+## 常用命令
+
+扩展提供以下命令：
+
+- `Yiqi's LatexSnips: Open Snippets Directory`
+- `Yiqi's LatexSnips: Open Snippet File`
+- `Yiqi's LatexSnips: Reload Snippets`
+- `Yiqi's LatexSnips: Smart Math Enter`
+- `Yiqi's LatexSnips: Insert Matrix Column Separator`
+- `Yiqi's LatexSnips: Smart Alignment Tab`
+
+## 开发
+
+安装依赖并编译：
+
+```sh
+npm install
+npm run compile
+```
+
+常用脚本：
+
+- `npm run compile`：编译 TypeScript 到 `out/`。
+- `npm run watch`：开发时持续编译。
+- `npm run lint`：运行 TypeScript 静态检查。
+- `npm test`：运行核心 LaTeX 编辑逻辑测试。
+- `npm run check`：依次运行静态检查和测试。
+
+## 致谢
+
+本项目派生自 HyperSnips 和 OrangeX4 的数学环境增强版本。当前仓库在原有可编程 snippet 能力基础上，面向 LaTeX / Markdown 数学写作继续维护和增强。

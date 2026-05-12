@@ -1,19 +1,19 @@
 {
-	"name": "hsnips",
-	"displayName": "HyperSnips for Math",
-	"icon": "images/hypersnips.png",
+	"name": "yiqis-latexsnips",
+	"displayName": "Yiqi's LatexSnips",
+	"icon": "images/yiqisnips.png",
 	"version": "0.4.8",
-	"publisher": "OrangeX4",
+	"publisher": "yiqiyang33",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/OrangeX4/hsnips"
+		"url": "https://github.com/yiqiyang33/Yiqi-s-LatexSnips"
 	},
 	"bugs": {
-		"url": "https://github.com/draivin/hsnips/issues"
+		"url": "https://github.com/yiqiyang33/Yiqi-s-LatexSnips/issues"
 	},
 	"engines": {
-		"vscode": "^1.52.0"
+		"vscode": "^1.85.0"
 	},
 	"categories": [
 		"Snippets",
@@ -27,12 +27,22 @@
 	],
 	"preview": true,
 	"activationEvents": [
-		"*"
+		"onStartupFinished",
+		"onLanguage:hsnips",
+		"onLanguage:markdown",
+		"onLanguage:latex",
+		"onLanguage:tex",
+		"onCommand:hsnips.openSnippetsDir",
+		"onCommand:hsnips.openSnippetFile",
+		"onCommand:hsnips.reloadSnippets",
+		"onCommand:hsnips.smartEnter",
+		"onCommand:hsnips.smartTab",
+		"onCommand:hsnips.matrixTab"
 	],
 	"contributes": {
 		"configuration": [
 			{
-				"title": "HyperSnips",
+				"title": "Yiqi's LatexSnips",
 				"properties": {
 					"hsnips.multiLineContext": {
 						"type": "number",
@@ -59,26 +69,46 @@
 		],
 		"commands": [
 			{
-				"category": "HyperSnips",
+				"category": "Yiqi's LatexSnips",
 				"command": "hsnips.openSnippetsDir",
 				"title": "Open Snippets Directory"
 			},
 			{
-				"category": "HyperSnips",
+				"category": "Yiqi's LatexSnips",
 				"command": "hsnips.openSnippetFile",
 				"title": "Open Snippet File"
 			},
 			{
-				"category": "HyperSnips",
+				"category": "Yiqi's LatexSnips",
 				"command": "hsnips.reloadSnippets",
 				"title": "Reload Snippets"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.smartEnter",
+				"title": "Smart Math Enter"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.matrixTab",
+				"title": "Insert Matrix Column Separator"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.smartTab",
+				"title": "Smart Alignment Tab"
 			}
 		],
 		"keybindings": [
 			{
+				"key": "enter",
+				"command": "hsnips.smartEnter",
+				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible"
+			},
+			{
 				"key": "tab",
-				"command": "hsnips.nextPlaceholder",
-				"when": "editorTextFocus && hasNextTabstop && inSnippetMode"
+				"command": "hsnips.smartTab",
+				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible"
 			},
 			{
 				"key": "shift+tab",
@@ -103,7 +133,7 @@
 					".hsnips"
 				],
 				"aliases": [
-					"HyperSnips"
+					"LatexSnips"
 				]
 			}
 		],
@@ -122,14 +152,15 @@
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
 		"compile": "tsc -p ./",
-		"lint": "tslint -p ./",
-		"watch": "tsc -watch -p ./"
+		"watch": "tsc -watch -p ./",
+		"lint": "tsc --noEmit -p ./",
+		"test": "npm run compile && node ./out/test/index.js",
+		"check": "npm run lint && npm run test"
 	},
 	"devDependencies": {
-		"@types/node": "^10.17.50",
-		"@types/vscode": "^1.52.0",
-		"eslint": "^7.17.0",
-		"typescript": "^3.9.7"
+		"@types/node": "18.19.130",
+		"@types/vscode": "1.85.0",
+		"typescript": "5.4.5"
 	},
 	"__metadata": {
 		"installedTimestamp": 1742883426754,

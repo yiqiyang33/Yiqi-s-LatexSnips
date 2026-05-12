@@ -79,8 +79,9 @@ export class HSnippetInstance {
         editor.document.uri.toString()
       );
     } catch (e) {
+      let message = e instanceof Error ? e.message : String(e);
       vscode.window.showWarningMessage(
-        `Snippet ${this.type.description} failed to expand with error: ${e.message}`
+        `Snippet ${this.type.description} failed to expand with error: ${message}`
       );
     }
 
