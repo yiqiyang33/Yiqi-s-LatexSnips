@@ -161,9 +161,5 @@
 		"@types/node": "18.19.130",
 		"@types/vscode": "1.85.0",
 		"typescript": "5.4.5"
-	},
-	"__metadata": {
-		"installedTimestamp": 1742883426754,
-		"size": 199915
 	}
 }

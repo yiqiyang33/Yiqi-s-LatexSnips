@@ -202,4 +202,4 @@ npm run compile
 
 ## 致谢
 
-本项目派生自 HyperSnips 和 OrangeX4 的数学环境增强版本。当前仓库在原有可编程 snippet 能力基础上，面向 LaTeX / Markdown 数学写作继续维护和增强。
+本项目派生自 HyperSnips 系列的可编程 snippet 引擎。当前仓库在原有能力基础上，面向 LaTeX / Markdown 数学写作继续维护和增强。
