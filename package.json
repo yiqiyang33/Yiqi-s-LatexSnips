@@ -194,7 +194,8 @@
 	},
 	"main": "./out/extension.js",
 	"scripts": {
-		"vscode:prepublish": "npm run compile",
+		"vscode:prepublish": "npm run prepare-monaco && npm run compile",
+		"prepare-monaco": "node scripts/prepare-monaco.js",
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"lint": "tsc --noEmit -p ./",
@@ -204,9 +205,7 @@
 	"devDependencies": {
 		"@types/node": "18.19.130",
 		"@types/vscode": "1.85.0",
+		"monaco-editor": "^0.52.2",
 		"typescript": "5.4.5"
-	},
-	"dependencies": {
-		"monaco-editor": "^0.52.2"
 	}
 }

@@ -93,7 +93,7 @@ function getHtml(
 ) {
   let nonce = getNonce();
   let state = escapeScriptJson(getWebviewState(documents));
-  let monacoVsUri = vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs');
+  let monacoVsUri = vscode.Uri.joinPath(extensionUri, 'media', 'monaco', 'vs');
   let monacoBaseUri = webview.asWebviewUri(monacoVsUri).toString();
   let monacoLoaderUri = webview
     .asWebviewUri(vscode.Uri.joinPath(monacoVsUri, 'loader.js'))
@@ -963,12 +963,7 @@ export function registerSnippetManager(
         return;
       }
 
-      let monacoRoot = vscode.Uri.joinPath(
-        context.extensionUri,
-        'node_modules',
-        'monaco-editor',
-        'min'
-      );
+      let monacoRoot = vscode.Uri.joinPath(context.extensionUri, 'media', 'monaco');
       panel = vscode.window.createWebviewPanel(
         'hsnipsSnippetManager',
         "Yiqi's LatexSnips",

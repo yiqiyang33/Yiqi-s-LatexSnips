@@ -245,7 +245,7 @@ npm run compile
 - `npm test`：运行核心 LaTeX 编辑逻辑测试。
 - `npm run check`：依次运行静态检查和测试。
 
-Snippet Manager 使用 `monaco-editor` 的本地运行时资源，因此打包 VSIX 时会包含 Monaco 文件。后续若要继续压缩 VSIX 体积，可以把 Monaco runtime 单独 vendor 到更小的资源目录或引入 bundling。
+Snippet Manager 使用 `monaco-editor` 的精简运行时资源。`vsce package` 会先运行 `npm run prepare-monaco`，只复制 Monaco editor core、worker、字体和语言包到 `media/monaco`，避免把整个 `node_modules/monaco-editor` 打进 VSIX。
 
 ## 致谢
 
