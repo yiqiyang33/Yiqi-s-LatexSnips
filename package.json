@@ -2,7 +2,7 @@
 	"name": "yiqis-latexsnips",
 	"displayName": "Yiqi's LatexSnips",
 	"icon": "images/yiqisnips.png",
-	"version": "0.4.8",
+	"version": "0.1.0",
 	"publisher": "yiqiyang33",
 	"license": "MIT",
 	"repository": {
@@ -108,7 +108,7 @@
 			{
 				"key": "tab",
 				"command": "hsnips.smartTab",
-				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible"
+				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible && !inlineSuggestionVisible"
 			},
 			{
 				"key": "shift+tab",

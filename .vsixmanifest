@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 	<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 		<Metadata>
-			<Identity Language="en-US" Id="yiqis-latexsnips" Version="0.4.8" Publisher="yiqiyang33" />
+			<Identity Language="en-US" Id="yiqis-latexsnips" Version="0.1.0" Publisher="yiqiyang33" />
 			<DisplayName>Yiqi's LatexSnips</DisplayName>
 			<Description xml:space="preserve"></Description>
 			<Tags>ultisnips,programmable snippets,dynamic snippets,snippets,keybindings,hsnips,latexsnips,yiqis-latexsnips</Tags>
