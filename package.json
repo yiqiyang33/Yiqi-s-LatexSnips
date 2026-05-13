@@ -34,7 +34,9 @@
 		"onLanguage:tex",
 		"onCommand:hsnips.openSnippetsDir",
 		"onCommand:hsnips.openSnippetFile",
+		"onCommand:hsnips.openSnippetManager",
 		"onCommand:hsnips.reloadSnippets",
+		"onCommand:hsnips.convertEnvironment",
 		"onCommand:hsnips.smartEnter",
 		"onCommand:hsnips.smartTab",
 		"onCommand:hsnips.matrixTab"
@@ -63,6 +65,38 @@
 						"type": "string",
 						"default": "$HOME/Library/Application Support/Code/User/hsnips",
 						"description": "Custom path for Mac OS."
+					},
+					"hsnips.context.extraMathEnvironments": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"default": [],
+						"description": "Additional LaTeX environments treated as math contexts."
+					},
+					"hsnips.context.extraRowBreakEnvironments": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"default": [],
+						"description": "Additional LaTeX environments where Enter can append a row break."
+					},
+					"hsnips.context.extraAlignmentEnvironments": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"default": [],
+						"description": "Additional LaTeX environments where Tab can insert an alignment separator."
+					},
+					"hsnips.context.extraTextLikeCommands": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"default": [],
+						"description": "Additional LaTeX commands whose argument should be treated as text, not math."
 					}
 				}
 			}
@@ -80,8 +114,18 @@
 			},
 			{
 				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.openSnippetManager",
+				"title": "Open Snippet Manager"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
 				"command": "hsnips.reloadSnippets",
 				"title": "Reload Snippets"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.convertEnvironment",
+				"title": "Convert LaTeX Environment"
 			},
 			{
 				"category": "Yiqi's LatexSnips",
@@ -103,12 +147,12 @@
 			{
 				"key": "enter",
 				"command": "hsnips.smartEnter",
-				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible"
+				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible && hsnips.canSmartEnter"
 			},
 			{
 				"key": "tab",
 				"command": "hsnips.smartTab",
-				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible && !inlineSuggestionVisible"
+				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible && !inlineSuggestionVisible && hsnips.canSmartTab"
 			},
 			{
 				"key": "shift+tab",
@@ -161,5 +205,8 @@
 		"@types/node": "18.19.130",
 		"@types/vscode": "1.85.0",
 		"typescript": "5.4.5"
+	},
+	"dependencies": {
+		"monaco-editor": "^0.52.2"
 	}
 }

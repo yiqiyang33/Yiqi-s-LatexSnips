@@ -1,80 +1,27 @@
-export const ROW_BREAK_ENVIRONMENTS = [
-  'align',
-  'align*',
-  'aligned',
-  'alignedat',
-  'alignedat*',
-  'gather',
-  'gather*',
-  'gathered',
-  'split',
-  'multline',
-  'multline*',
-  'matrix',
-  'pmatrix',
-  'bmatrix',
-  'Bmatrix',
-  'vmatrix',
-  'Vmatrix',
-  'smallmatrix',
-  'cases',
-  'array',
-  'tabular',
-  'tabular*',
-  'tabularx',
-  'longtable',
-];
+import {
+  findLatexCommentStart,
+  getLatexContext,
+  LatexContextOptions,
+} from './latexContext';
 
-export const ALIGNMENT_SEPARATOR_ENVIRONMENTS = [
-  'align',
-  'align*',
-  'aligned',
-  'alignedat',
-  'alignedat*',
-  'matrix',
-  'pmatrix',
-  'bmatrix',
-  'Bmatrix',
-  'vmatrix',
-  'Vmatrix',
-  'smallmatrix',
-  'cases',
-  'array',
-  'tabular',
-  'tabular*',
-  'tabularx',
-  'longtable',
-];
-
-const MATH_ENVIRONMENTS = [
-  'math',
-  'displaymath',
-  'equation',
-  'equation*',
-  ...ROW_BREAK_ENVIRONMENTS,
-];
-
-const TEXT_COMMANDS = [
-  'text',
-  'textrm',
-  'textnormal',
-  'mbox',
-  'operatorname',
-  'mathrm',
-  'label',
-  'tag',
-];
-
-export interface LatexContext {
-  environmentStack: string[];
-  currentEnvironment: string | undefined;
-  inComment: boolean;
-  inMarkdownCode: boolean;
-  inTextLikeCommand: boolean;
-  inMath: boolean;
-  canSmartEnter: boolean;
-  canInsertAlignmentSeparator: boolean;
-}
+export {
+  ALIGNMENT_SEPARATOR_ENVIRONMENTS,
+  findLatexCommentStart,
+  getLatexContext,
+  getOpenLatexEnvironmentFrames,
+  getOpenLatexEnvironmentStack,
+  isInsideLatexLineComment,
+  isInsideMarkdownCode,
+  isInsideTextLikeCommand,
+  LatexContext,
+  LatexContextOptions,
+  LatexEditorContext,
+  LatexEnvironmentFrame,
+  MATH_ENVIRONMENTS,
+  ROW_BREAK_ENVIRONMENTS,
+  sanitizeLatexForParsing,
+  stripLatexComments,
+} from './latexContext';
 
 export interface TextEdit {
   start: number;
@@ -86,195 +33,6 @@ export interface SmartEnterPlan {
   handled: boolean;
   edits: TextEdit[];
   cursorOffset?: number;
-}
-
-function isEscaped(text: string, index: number) {
-  let slashCount = 0;
-  for (let i = index - 1; i >= 0 && text[i] == '\\'; i--) {
-    slashCount++;
-  }
-  return slashCount % 2 == 1;
-}
-
-export function findLatexCommentStart(line: string) {
-  for (let index = 0; index < line.length; index++) {
-    if (line[index] == '%' && !isEscaped(line, index)) {
-      return index;
-    }
-  }
-
-  return -1;
-}
-
-function stripMarkdownCodeAndHtmlComments(text: string) {
-  text = text.replace(/```[\s\S]*?```/g, '');
-  text = text.replace(/`[^`\n]*`/g, '');
-  return text.replace(/<!--[\s\S]*?-->/g, '');
-}
-
-export function stripLatexComments(text: string) {
-  return stripMarkdownCodeAndHtmlComments(text)
-    .split(/\r?\n/)
-    .map((line) => {
-      let commentStart = findLatexCommentStart(line);
-      return commentStart == -1 ? line : line.substring(0, commentStart);
-    })
-    .join('\n');
-}
-
-export function getOpenLatexEnvironmentStack(text: string, offset: number) {
-  let beforeCursor = stripLatexComments(text.substring(0, offset));
-  const stack: string[] = [];
-  const environmentReg = /\\(begin|end)\s*\{([^}]+)\}/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = environmentReg.exec(beforeCursor)) !== null) {
-    let kind = match[1];
-    let environment = match[2].trim();
-
-    if (kind == 'begin') {
-      stack.push(environment);
-      continue;
-    }
-
-    let matchingBegin = stack.lastIndexOf(environment);
-    if (matchingBegin != -1) {
-      stack.splice(matchingBegin, 1);
-    }
-  }
-
-  return stack;
-}
-
-function isInAnyEnvironment(stack: string[], environments: string[]) {
-  return stack.some((environment) => environments.indexOf(environment) != -1);
-}
-
-export function isInsideLatexLineComment(text: string, offset: number) {
-  let lineStart = text.lastIndexOf('\n', Math.max(offset - 1, 0)) + 1;
-  let lineBeforeCursor = text.substring(lineStart, offset);
-  return findLatexCommentStart(lineBeforeCursor) != -1;
-}
-
-export function isInsideMarkdownCode(text: string, offset: number) {
-  let beforeCursor = text.substring(0, offset);
-  let fenceCount = (beforeCursor.match(/^```/gm) || []).length;
-  if (fenceCount % 2 == 1) {
-    return true;
-  }
-
-  let lineStart = text.lastIndexOf('\n', Math.max(offset - 1, 0)) + 1;
-  let lineBeforeCursor = text.substring(lineStart, offset);
-  let inlineBackticks = lineBeforeCursor.match(/`/g);
-  return inlineBackticks ? inlineBackticks.length % 2 == 1 : false;
-}
-
-function findMatchingBrace(text: string, openBrace: number, limit: number) {
-  let depth = 0;
-  for (let index = openBrace; index < limit; index++) {
-    if (isEscaped(text, index)) {
-      continue;
-    }
-
-    if (text[index] == '{') {
-      depth++;
-      continue;
-    }
-
-    if (text[index] == '}') {
-      depth--;
-      if (depth == 0) {
-        return index;
-      }
-    }
-  }
-
-  return -1;
-}
-
-export function isInsideTextLikeCommand(text: string, offset: number) {
-  const commandReg = new RegExp('\\\\(' + TEXT_COMMANDS.join('|') + ')\\s*\\{', 'g');
-  let match: RegExpExecArray | null;
-
-  while ((match = commandReg.exec(text.substring(0, offset))) !== null) {
-    let openBrace = commandReg.lastIndex - 1;
-    let closeBrace = findMatchingBrace(text, openBrace, offset + 1);
-    if (closeBrace == -1 || closeBrace >= offset) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function isInsideDollarMath(text: string, offset: number) {
-  let beforeCursor = stripLatexComments(text.substring(0, offset));
-  let stack: string[] = [];
-
-  for (let index = 0; index < beforeCursor.length; index++) {
-    let char = beforeCursor[index];
-
-    if (char == '\\') {
-      let next = beforeCursor[index + 1];
-      if (next == '(' || next == '[') {
-        stack.push(next == '(' ? '\\(' : '\\[');
-        index++;
-        continue;
-      }
-      if (next == ')' && stack[stack.length - 1] == '\\(') {
-        stack.pop();
-        index++;
-        continue;
-      }
-      if (next == ']' && stack[stack.length - 1] == '\\[') {
-        stack.pop();
-        index++;
-        continue;
-      }
-
-      index++;
-      continue;
-    }
-
-    if (char == '$') {
-      let delimiter = beforeCursor[index + 1] == '$' ? '$$' : '$';
-      if (stack[stack.length - 1] == delimiter) {
-        stack.pop();
-      } else {
-        stack.push(delimiter);
-      }
-      if (delimiter == '$$') {
-        index++;
-      }
-    }
-  }
-
-  return stack.length > 0;
-}
-
-export function getLatexContext(text: string, offset: number): LatexContext {
-  let environmentStack = getOpenLatexEnvironmentStack(text, offset);
-  let currentEnvironment = environmentStack[environmentStack.length - 1];
-  let inComment = isInsideLatexLineComment(text, offset);
-  let inMarkdownCode = isInsideMarkdownCode(text, offset);
-  let inTextLikeCommand = isInsideTextLikeCommand(text, offset);
-  let inRowBreakEnvironment = isInAnyEnvironment(environmentStack, ROW_BREAK_ENVIRONMENTS);
-  let inAlignmentEnvironment = isInAnyEnvironment(environmentStack, ALIGNMENT_SEPARATOR_ENVIRONMENTS);
-  let inMath = (
-    isInsideDollarMath(text, offset) ||
-    isInAnyEnvironment(environmentStack, MATH_ENVIRONMENTS)
-  ) && !inComment && !inMarkdownCode && !inTextLikeCommand;
-
-  return {
-    environmentStack,
-    currentEnvironment,
-    inComment,
-    inMarkdownCode,
-    inTextLikeCommand,
-    inMath,
-    canSmartEnter: inRowBreakEnvironment && !inComment && !inMarkdownCode && !inTextLikeCommand,
-    canInsertAlignmentSeparator: inAlignmentEnvironment && !inComment && !inMarkdownCode && !inTextLikeCommand,
-  };
 }
 
 function getLineBounds(text: string, offset: number) {
@@ -342,8 +100,12 @@ function shouldAppendMathLineBreak(line: string) {
   return true;
 }
 
-export function getSmartEnterPlan(text: string, offset: number): SmartEnterPlan {
-  let context = getLatexContext(text, offset);
+export function getSmartEnterPlan(
+  text: string,
+  offset: number,
+  options: LatexContextOptions = {}
+): SmartEnterPlan {
+  let context = getLatexContext(text, offset, options);
   if (!context.canSmartEnter) {
     return { handled: false, edits: [] };
   }
@@ -397,9 +159,10 @@ export function getSmartEnterPlan(text: string, offset: number): SmartEnterPlan 
 export function getSmartEnterRecoveryPlan(
   beforeEnterText: string,
   offsetBeforeEnter: number,
-  currentText: string
+  currentText: string,
+  options: LatexContextOptions = {}
 ): SmartEnterPlan {
-  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter);
+  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options);
   if (!desiredPlan.handled || typeof desiredPlan.cursorOffset != 'number') {
     return { handled: false, edits: [] };
   }
@@ -417,9 +180,13 @@ export function getSmartEnterRecoveryPlan(
   };
 }
 
-export function shouldInsertAlignmentSeparator(text: string, offset: number) {
-  let context = getLatexContext(text, offset);
-  if (!context.canInsertAlignmentSeparator) {
+export function shouldInsertAlignmentSeparator(
+  text: string,
+  offset: number,
+  options: LatexContextOptions = {}
+) {
+  let context = getLatexContext(text, offset, options);
+  if (!context.canSmartTab) {
     return false;
   }
 

@@ -8,6 +8,20 @@ import {
   SmartEnterPlan,
   TextEdit,
 } from '../latexEdit';
+import {
+  createEnvironmentConversionPlan,
+  createWrapEnvironmentPlan,
+  formatTableArguments,
+} from '../environmentConvert';
+import {
+  assertExpectedSnippetDocumentHash,
+  appendSnippet,
+  applySnippetUpdate,
+  deleteSnippet,
+  hashText,
+  parseSnippetDocument,
+} from '../snippetDocument';
+import { parse } from '../parser';
 
 function marked(input: string) {
   let offset = input.indexOf('|');
@@ -48,6 +62,7 @@ outside|`);
 function testMathContext() {
   let inline = marked(String.raw`before $x + y|$ after`);
   assert.strictEqual(getLatexContext(inline.text, inline.offset).inMath, true);
+  assert.strictEqual(getLatexContext(inline.text, inline.offset).mathKind, 'inlineDollar');
 
   let label = marked(String.raw`\begin{align}
 \label{eq:test|}
@@ -66,6 +81,26 @@ a &= b % x|
     '```',
   ].join('\n'));
   assert.strictEqual(getLatexContext(fencedCode.text, fencedCode.offset).canSmartEnter, false);
+
+  let verbatim = marked(String.raw`\begin{verbatim}
+\begin{align}
+a &= b|
+\end{align}
+\end{verbatim}`);
+  assert.strictEqual(getLatexContext(verbatim.text, verbatim.offset).inVerbatimLikeEnvironment, true);
+  assert.strictEqual(getLatexContext(verbatim.text, verbatim.offset).canSmartEnter, false);
+
+  let custom = marked(String.raw`\begin{myalign}
+a &= b|
+\end{myalign}`);
+  let customContext = getLatexContext(custom.text, custom.offset, {
+    extraMathEnvironments: ['myalign'],
+    extraRowBreakEnvironments: ['myalign'],
+    extraAlignmentEnvironments: ['myalign'],
+  });
+  assert.strictEqual(customContext.canExpandMathSnippet, true);
+  assert.strictEqual(customContext.canSmartEnter, true);
+  assert.strictEqual(customContext.canSmartTab, true);
 }
 
 function testSmartEnter() {
@@ -180,10 +215,145 @@ a % |
   assert.strictEqual(shouldInsertAlignmentSeparator(comment.text, comment.offset), false);
 }
 
+function testEnvironmentConversion() {
+  let align = marked(String.raw`\begin{align}
+a &= b|
+\end{align}`);
+  assert.strictEqual(
+    applyTextEdits(
+      align.text,
+      createEnvironmentConversionPlan(align.text, align.offset, 'aligned').edits
+    ),
+    String.raw`\begin{aligned}
+a &= b
+\end{aligned}`
+  );
+
+  let display = marked(String.raw`\[
+a &= b|
+\]`);
+  assert.strictEqual(
+    applyTextEdits(
+      display.text,
+      createEnvironmentConversionPlan(display.text, display.offset, 'equation*').edits
+    ),
+    String.raw`\begin{equation*}
+a &= b
+\end{equation*}`
+  );
+
+  let tabular = marked(String.raw`\begin{tabular}{cc}
+a & b|
+\end{tabular}`);
+  assert.strictEqual(
+    applyTextEdits(
+      tabular.text,
+      createEnvironmentConversionPlan(tabular.text, tabular.offset, 'tabularx').edits
+    ),
+    String.raw`\begin{tabularx}{\linewidth}{cc}
+a & b
+\end{tabularx}`
+  );
+
+  assert.strictEqual(formatTableArguments('tabular', 'lr'), '{lr}');
+  assert.strictEqual(formatTableArguments('tabularx', 'lr'), String.raw`{\linewidth}{lr}`);
+
+  let selected = 'a &= b';
+  assert.strictEqual(
+    applyTextEdits(selected, createWrapEnvironmentPlan(selected, 0, selected.length, 'align').edits),
+    String.raw`\begin{align}
+a &= b
+\end{align}`
+  );
+}
+
+function testSnippetDocument() {
+  let content = [
+    'priority 10',
+    'snippet foo "Foo" wA',
+    '\\foo{$0}',
+    'endsnippet',
+    '',
+    'snippet foo "Duplicate" A',
+    '\\bar',
+    'endsnippet',
+    '',
+    'snippet `x+` "Dynamic" rmA',
+    '``rv = "x";``',
+    'endsnippet',
+  ].join('\n');
+  let document = parseSnippetDocument(content, '/tmp/latex.hsnips', 'latex');
+
+  assert.strictEqual(document.snippets.length, 3);
+  assert.strictEqual(document.snippets[0].priority, 10);
+  assert.strictEqual(document.snippets[0].priorityStart, 0);
+  assert.strictEqual(content.slice(document.snippets[0].headerStart).startsWith('snippet foo'), true);
+  assert.strictEqual(document.snippets[0].isSimple, true);
+  assert.strictEqual(document.snippets[2].isRegex, true);
+  assert.strictEqual(document.snippets[2].isSimple, false);
+  assert.strictEqual(
+    document.snippets[0].diagnostics.some((diagnostic) => diagnostic.message.includes('Duplicate')),
+    true
+  );
+
+  let updated = applySnippetUpdate(content, document.snippets[0], {
+    trigger: 'foo2',
+    description: 'Foo 2',
+    flags: 'iAm',
+    priority: 5,
+    body: '\\fooTwo{$0}',
+  });
+  assert.strictEqual(updated.includes('priority 5\nsnippet foo2 "Foo 2" iAm\n\\fooTwo{$0}\nendsnippet'), true);
+
+  let appended = appendSnippet('', {
+    trigger: 'new',
+    description: 'New',
+    flags: 'wAt',
+    priority: 0,
+    body: '$0',
+  });
+  assert.strictEqual(appended.trim(), 'snippet new "New" wAt\n$0\nendsnippet');
+
+  let reparsed = parseSnippetDocument(updated, '/tmp/latex.hsnips', 'latex');
+  let deleted = deleteSnippet(updated, reparsed.snippets[0]);
+  assert.strictEqual(deleted.includes('foo2'), false);
+
+  let broken = parseSnippetDocument('snippet bad "Bad" w\nbody', '/tmp/bad.hsnips', 'latex');
+  assert.strictEqual(
+    broken.diagnostics.some((diagnostic) => diagnostic.message.includes('missing endsnippet')),
+    true
+  );
+
+  assert.doesNotThrow(() => assertExpectedSnippetDocumentHash(content, hashText(content)));
+  assert.throws(
+    () => assertExpectedSnippetDocumentHash(content, hashText(content + 'changed')),
+    /changed on disk/
+  );
+}
+
+function testTextOnlySnippetFlag() {
+  let snippets = parse([
+    'snippet align "align" wAt',
+    '\\begin{align}',
+    '$0',
+    '\\end{align}',
+    'endsnippet',
+  ].join('\n'));
+
+  assert.strictEqual(snippets.length, 1);
+  assert.strictEqual(snippets[0].automatic, true);
+  assert.strictEqual(snippets[0].wordboundary, true);
+  assert.strictEqual(snippets[0].text, true);
+  assert.strictEqual(snippets[0].math, false);
+}
+
 testEnvironmentStack();
 testMathContext();
 testSmartEnter();
 testSmartEnterRecovery();
 testAlignmentTab();
+testEnvironmentConversion();
+testSnippetDocument();
+testTextOnlySnippetFlag();
 
 console.log('latex edit tests passed');

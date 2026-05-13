@@ -6,35 +6,127 @@ import { HSnippet } from './hsnippet';
 import { HSnippetInstance } from './hsnippetInstance';
 import { parse } from './parser';
 import { getSnippetDir } from './utils';
-import { getCompletions, CompletionInfo } from './completion';
+import { getAutomaticCompletion, getCompletions, CompletionInfo } from './completion';
 import {
     getLatexContext,
     getSmartEnterPlan,
     getSmartEnterRecoveryPlan,
     shouldInsertAlignmentSeparator,
+    LatexContextOptions,
     TextEdit,
 } from './latexEdit';
+import {
+    CONVERTIBLE_ENVIRONMENTS,
+    conversionNeedsTableArguments,
+    createEnvironmentConversionPlan,
+    createWrapEnvironmentPlan,
+    findDisplayMathDelimiterAt,
+    findLatexEnvironmentPairAt,
+    formatTableArguments,
+    isTableLikeEnvironment,
+} from './environmentConvert';
+import { registerSnippetManager } from './snippetManager';
 
 const SNIPPETS_BY_LANGUAGE: Map<string, HSnippet[]> = new Map();
 const SNIPPET_STACK: HSnippetInstance[] = [];
 
 let insertingSnippet = false;
 let applyingLatexEdit = false;
+let latexContextCache:
+    | {
+        document: vscode.TextDocument;
+        version: number;
+        offset: number;
+        optionsKey: string;
+        context: ReturnType<typeof getLatexContext>;
+    }
+    | undefined;
+let latexContextOptionsCache:
+    | {
+        options: LatexContextOptions;
+        key: string;
+    }
+    | undefined;
 
-function updateMathContext(editor: vscode.TextEditor | undefined) {
-    let canSmartEnter = false;
-    let canInsertAlignmentSeparator = false;
+function isLatexLikeDocument(document: vscode.TextDocument) {
+    return ['latex', 'tex', 'markdown'].includes(document.languageId.toLowerCase());
+}
 
-    if (editor) {
-        let text = editor.document.getText();
-        let offset = editor.document.offsetAt(editor.selection.active);
-        let context = getLatexContext(text, offset);
-        canSmartEnter = context.canSmartEnter;
-        canInsertAlignmentSeparator = context.canInsertAlignmentSeparator;
+function getStringArrayConfiguration(path: string) {
+    let value = vscode.workspace.getConfiguration('hsnips').get<string[]>(path);
+    return Array.isArray(value) ? value.filter((item) => typeof item == 'string') : [];
+}
+
+function readLatexContextOptions(): LatexContextOptions {
+    return {
+        extraMathEnvironments: getStringArrayConfiguration('context.extraMathEnvironments'),
+        extraRowBreakEnvironments: getStringArrayConfiguration('context.extraRowBreakEnvironments'),
+        extraAlignmentEnvironments: getStringArrayConfiguration('context.extraAlignmentEnvironments'),
+        extraTextLikeCommands: getStringArrayConfiguration('context.extraTextLikeCommands'),
+    };
+}
+
+function getLatexContextOptionsState() {
+    if (!latexContextOptionsCache) {
+        let options = readLatexContextOptions();
+        latexContextOptionsCache = {
+            options,
+            key: JSON.stringify(options),
+        };
+    }
+    return latexContextOptionsCache;
+}
+
+function getLatexContextOptions(): LatexContextOptions {
+    return getLatexContextOptionsState().options;
+}
+
+function getCachedLatexContext(document: vscode.TextDocument, position: vscode.Position) {
+    if (!isLatexLikeDocument(document)) {
+        return undefined;
     }
 
+    let { options, key: optionsKey } = getLatexContextOptionsState();
+    let offset = document.offsetAt(position);
+    if (
+        latexContextCache &&
+        latexContextCache.document == document &&
+        latexContextCache.version == document.version &&
+        latexContextCache.offset == offset &&
+        latexContextCache.optionsKey == optionsKey
+    ) {
+        return latexContextCache.context;
+    }
+
+    let context = getLatexContext(document.getText(), offset, options);
+    latexContextCache = {
+        document,
+        version: document.version,
+        offset,
+        optionsKey,
+        context,
+    };
+    return context;
+}
+
+function updateMathContext(editor: vscode.TextEditor | undefined) {
+    let inLatexMath = false;
+    let canSmartEnter = false;
+    let canSmartTab = false;
+
+    if (editor) {
+        let context = getCachedLatexContext(editor.document, editor.selection.active);
+        if (context) {
+            inLatexMath = context.inMath;
+            canSmartEnter = context.canSmartEnter;
+            canSmartTab = context.canSmartTab;
+        }
+    }
+
+    vscode.commands.executeCommand('setContext', 'hsnips.inLatexMath', inLatexMath);
     vscode.commands.executeCommand('setContext', 'hsnips.canSmartEnter', canSmartEnter);
-    vscode.commands.executeCommand('setContext', 'hsnips.canInsertAlignmentSeparator', canInsertAlignmentSeparator);
+    vscode.commands.executeCommand('setContext', 'hsnips.canSmartTab', canSmartTab);
+    vscode.commands.executeCommand('setContext', 'hsnips.canInsertAlignmentSeparator', canSmartTab);
 }
 
 async function typeText(text: string) {
@@ -68,7 +160,7 @@ async function smartEnter(editor: vscode.TextEditor) {
 
     let text = editor.document.getText();
     let offset = editor.document.offsetAt(editor.selection.active);
-    let plan = getSmartEnterPlan(text, offset);
+    let plan = getSmartEnterPlan(text, offset, getLatexContextOptions());
 
     if (!plan.handled) {
         await typeText('\n');
@@ -100,7 +192,12 @@ async function recoverSmartEnterAfterPlainEnter(
         currentText.slice(0, change.rangeOffset) +
         currentText.slice(change.rangeOffset + change.text.length)
     );
-    let plan = getSmartEnterRecoveryPlan(beforeEnterText, change.rangeOffset, currentText);
+    let plan = getSmartEnterRecoveryPlan(
+        beforeEnterText,
+        change.rangeOffset,
+        currentText,
+        getLatexContextOptions()
+    );
 
     if (!plan.handled) {
         return false;
@@ -138,8 +235,9 @@ async function fallbackTab() {
 
 async function smartTab(editor: vscode.TextEditor) {
     let text = editor.document.getText();
+    let options = getLatexContextOptions();
     let shouldInsertSeparator = editor.selections.every((selection) => {
-        return shouldInsertAlignmentSeparator(text, editor.document.offsetAt(selection.active));
+        return shouldInsertAlignmentSeparator(text, editor.document.offsetAt(selection.active), options);
     });
 
     if (!shouldInsertSeparator) {
@@ -152,6 +250,69 @@ async function smartTab(editor: vscode.TextEditor) {
             editBuilder.replace(selection, ' & ');
         }
     });
+}
+
+async function convertEnvironment(editor: vscode.TextEditor) {
+    let text = editor.document.getText();
+    let options = getLatexContextOptions();
+    let selection = editor.selection;
+    let offset = editor.document.offsetAt(selection.active);
+    let selectionStart = editor.document.offsetAt(selection.start);
+    let selectionEnd = editor.document.offsetAt(selection.end);
+    let environmentPair = findLatexEnvironmentPairAt(text, offset, options);
+    let delimiterPair = findDisplayMathDelimiterAt(text, offset);
+    let currentName = environmentPair?.name;
+    let target = await vscode.window.showQuickPick(
+        CONVERTIBLE_ENVIRONMENTS
+            .filter((environment) => environment != currentName)
+            .map((environment) => ({
+                label: environment,
+                description: isTableLikeEnvironment(environment) ? 'table-like environment' : 'math environment',
+            })),
+        {
+            placeHolder: currentName
+                ? `Convert ${currentName} to...`
+                : selection.isEmpty
+                    ? 'Convert display math to...'
+                    : 'Wrap selection with...',
+        }
+    );
+
+    if (!target) {
+        return;
+    }
+
+    let targetArguments = '';
+    if (isTableLikeEnvironment(target.label)) {
+        let needsArguments = !environmentPair || conversionNeedsTableArguments(text, offset, target.label);
+        if (needsArguments) {
+            let columnSpec = await vscode.window.showInputBox({
+                prompt: `Column specification for ${target.label}`,
+                value: 'c',
+                ignoreFocusOut: true,
+            });
+            if (columnSpec === undefined) {
+                return;
+            }
+            targetArguments = formatTableArguments(target.label, columnSpec);
+        }
+    }
+
+    let plan = !selection.isEmpty && !environmentPair && !delimiterPair
+        ? createWrapEnvironmentPlan(text, selectionStart, selectionEnd, target.label, targetArguments)
+        : createEnvironmentConversionPlan(text, offset, target.label, targetArguments, options);
+
+    if (!plan.handled) {
+        vscode.window.showInformationMessage('No LaTeX environment or display math delimiter found at the cursor.');
+        return;
+    }
+
+    let inserted = await applyEdits(editor, plan.edits);
+    if (inserted && typeof plan.cursorOffset == 'number') {
+        let newPosition = editor.document.positionAt(plan.cursorOffset);
+        editor.selection = new vscode.Selection(newPosition, newPosition);
+        editor.revealRange(new vscode.Range(newPosition, newPosition));
+    }
 }
 
 async function loadSnippets() {
@@ -230,6 +391,7 @@ export async function expandSnippet(
 export function activate(context: vscode.ExtensionContext) {
     loadSnippets();
     updateMathContext(vscode.window.activeTextEditor);
+    registerSnippetManager(context, loadSnippets);
 
     context.subscriptions.push(
         vscode.commands.registerCommand('hsnips.openSnippetsDir', () => openExplorer(getSnippetDir()))
@@ -293,6 +455,12 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerTextEditorCommand('hsnips.convertEnvironment', (editor) => {
+            return convertEnvironment(editor);
+        })
+    );
+
+    context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument((document) => {
             if (document.languageId == 'hsnips') {
                 loadSnippets();
@@ -309,10 +477,25 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
 
-    function isMathEnvironment(editor: vscode.TextEditor) {
-        let text = editor.document.getText();
-        let offset = editor.document.offsetAt(editor.selection.start);
-        return getLatexContext(text, offset).inMath;
+    function getDocumentLatexContext(document: vscode.TextDocument, offset: number) {
+        return getCachedLatexContext(document, document.positionAt(offset));
+    }
+
+    function getEditorLatexContext(editor: vscode.TextEditor, position = editor.selection.start) {
+        return getDocumentLatexContext(editor.document, editor.document.offsetAt(position));
+    }
+
+    function canExpandSnippetInContext(
+        snippet: HSnippet,
+        latexContext: ReturnType<typeof getEditorLatexContext>
+    ) {
+        if (snippet.math) {
+            return Boolean(latexContext?.canExpandMathSnippet);
+        }
+        if (snippet.text && latexContext?.inMath) {
+            return false;
+        }
+        return true;
     }
 
     // Forward all document changes so that the active snippet can update its related blocks.
@@ -344,19 +527,18 @@ export function activate(context: vscode.ExtensionContext) {
             let snippets = SNIPPETS_BY_LANGUAGE.get(e.document.languageId.toLowerCase());
             if (!snippets) snippets = SNIPPETS_BY_LANGUAGE.get('all');
             if (!snippets) return;
+            let editor = vscode.window.activeTextEditor;
+            if (!editor || e.document != editor.document) return;
+
+            let latexContext = getEditorLatexContext(editor);
+            snippets = snippets.filter((snippet) => canExpandSnippetInContext(snippet, latexContext));
 
             let mainChangePosition = mainChange.range.start.translate(0, mainChange.text.length);
-            let completions = getCompletions(e.document, mainChangePosition, snippets);
+            let completion = getAutomaticCompletion(e.document, mainChangePosition, snippets);
 
-            // When an automatic completion is matched it is returned as an element, we check for this by
-            // using !isArray, and then expand the snippet.
-            if (completions && !Array.isArray(completions)) {
-                let editor = vscode.window.activeTextEditor;
-                if (editor && e.document == editor.document &&
-                    (!completions.snippet.math || isMathEnvironment(editor))) {
-                    expandSnippet(completions, editor);
-                    return;
-                }
+            if (completion) {
+                expandSnippet(completion, editor);
+                return;
             }
         })
     );
@@ -388,24 +570,29 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration('hsnips.context')) {
+                latexContextCache = undefined;
+                latexContextOptionsCache = undefined;
+                updateMathContext(vscode.window.activeTextEditor);
+            }
+        })
+    );
+
+    context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider([{ scheme: 'untitled' }, { scheme: 'file' }], {
             provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
                 let snippets = SNIPPETS_BY_LANGUAGE.get(document.languageId.toLowerCase());
                 if (!snippets) snippets = SNIPPETS_BY_LANGUAGE.get('all');
                 if (!snippets) return;
+                let editor = vscode.window.activeTextEditor;
+                if (!editor || document != editor.document) return;
+                let latexContext = getDocumentLatexContext(document, document.offsetAt(position));
+                snippets = snippets.filter((snippet) => canExpandSnippetInContext(snippet, latexContext));
 
-                // When getCompletions returns an array it means no auto-expansion was matched for the
-                // current context, in this case show the snippet list to the user.
                 let completions = getCompletions(document, position, snippets);
                 if (completions && Array.isArray(completions)) {
-                    let editor = vscode.window.activeTextEditor;
-                    return completions.filter((c) => {
-                        if (editor && (!c.snippet.math || isMathEnvironment(editor))) {
-                            return true
-                        } else {
-                            return false
-                        }
-                    }).map((c) => c.toCompletionItem());
+                    return completions.map((c) => c.toCompletionItem());
                 }
             },
         })
