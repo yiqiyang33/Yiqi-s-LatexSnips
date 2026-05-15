@@ -2,7 +2,7 @@
 	"name": "yiqis-latexsnips",
 	"displayName": "Yiqi's LatexSnips",
 	"icon": "images/yiqisnips.png",
-	"version": "0.1.0",
+	"version": "0.1.2",
 	"publisher": "yiqiyang33",
 	"license": "MIT",
 	"repository": {
@@ -35,8 +35,13 @@
 		"onCommand:hsnips.openSnippetsDir",
 		"onCommand:hsnips.openSnippetFile",
 		"onCommand:hsnips.openSnippetManager",
+		"onCommand:hsnips.selectProfile",
+		"onCommand:hsnips.openActiveProfile",
 		"onCommand:hsnips.reloadSnippets",
 		"onCommand:hsnips.convertEnvironment",
+		"onCommand:hsnips.renameMatchingEnvironment",
+		"onCommand:hsnips.wrapMathStructure",
+		"onCommand:hsnips.unwrapMathStructure",
 		"onCommand:hsnips.smartEnter",
 		"onCommand:hsnips.smartTab",
 		"onCommand:hsnips.matrixTab"
@@ -97,6 +102,11 @@
 						},
 						"default": [],
 						"description": "Additional LaTeX commands whose argument should be treated as text, not math."
+					},
+					"hsnips.profiles.activeProfile": {
+						"type": "string",
+						"default": "",
+						"description": "Active snippet profile loaded from hsnips/profiles/<name>. Empty means base snippets only."
 					}
 				}
 			}
@@ -119,6 +129,16 @@
 			},
 			{
 				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.selectProfile",
+				"title": "Select Snippet Profile"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.openActiveProfile",
+				"title": "Open Active Snippet Profile"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
 				"command": "hsnips.reloadSnippets",
 				"title": "Reload Snippets"
 			},
@@ -126,6 +146,21 @@
 				"category": "Yiqi's LatexSnips",
 				"command": "hsnips.convertEnvironment",
 				"title": "Convert LaTeX Environment"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.renameMatchingEnvironment",
+				"title": "Rename Matching LaTeX Environment"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.wrapMathStructure",
+				"title": "Wrap Math Structure"
+			},
+			{
+				"category": "Yiqi's LatexSnips",
+				"command": "hsnips.unwrapMathStructure",
+				"title": "Unwrap Math Structure"
 			},
 			{
 				"category": "Yiqi's LatexSnips",

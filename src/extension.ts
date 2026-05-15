@@ -17,15 +17,28 @@ import {
 } from './latexEdit';
 import {
     CONVERTIBLE_ENVIRONMENTS,
+    WRAPPABLE_MATH_ENVIRONMENTS,
     conversionNeedsTableArguments,
+    createEnvironmentNameOnlyRenamePlan,
+    createEnvironmentNameSyncPlan,
     createEnvironmentConversionPlan,
+    createUnwrapMathStructurePlan,
+    createWrapCurrentMathStructurePlan,
     createWrapEnvironmentPlan,
     findDisplayMathDelimiterAt,
     findLatexEnvironmentPairAt,
     formatTableArguments,
+    isValidEnvironmentName,
     isTableLikeEnvironment,
+    SingleTextChange,
 } from './environmentConvert';
 import { registerSnippetManager } from './snippetManager';
+import {
+    discoverSnippetProfiles,
+    ensureProfileDir,
+    getSnippetFilesForProfile,
+    normalizeProfileName,
+} from './snippetProfiles';
 
 const SNIPPETS_BY_LANGUAGE: Map<string, HSnippet[]> = new Map();
 const SNIPPET_STACK: HSnippetInstance[] = [];
@@ -47,6 +60,7 @@ let latexContextOptionsCache:
         key: string;
     }
     | undefined;
+const DOCUMENT_TEXT_CACHE = new WeakMap<vscode.TextDocument, string>();
 
 function isLatexLikeDocument(document: vscode.TextDocument) {
     return ['latex', 'tex', 'markdown'].includes(document.languageId.toLowerCase());
@@ -55,6 +69,12 @@ function isLatexLikeDocument(document: vscode.TextDocument) {
 function getStringArrayConfiguration(path: string) {
     let value = vscode.workspace.getConfiguration('hsnips').get<string[]>(path);
     return Array.isArray(value) ? value.filter((item) => typeof item == 'string') : [];
+}
+
+function getActiveSnippetProfile() {
+    return normalizeProfileName(
+        vscode.workspace.getConfiguration('hsnips').get<string>('profiles.activeProfile')
+    );
 }
 
 function readLatexContextOptions(): LatexContextOptions {
@@ -213,6 +233,59 @@ async function recoverSmartEnterAfterPlainEnter(
     return inserted;
 }
 
+function getTextBeforeChange(currentText: string, change: vscode.TextDocumentContentChangeEvent) {
+    return (
+        currentText.slice(0, change.rangeOffset) +
+        currentText.slice(change.rangeOffset + change.text.length)
+    );
+}
+
+async function recoverEnvironmentNameSyncAfterChange(
+    editor: vscode.TextEditor,
+    change: vscode.TextDocumentContentChangeEvent,
+    beforeText: string,
+    currentText: string
+) {
+    if (applyingLatexEdit || !isLatexLikeDocument(editor.document)) {
+        return false;
+    }
+
+    let plan = createEnvironmentNameSyncPlan(
+        beforeText,
+        currentText,
+        {
+            rangeOffset: change.rangeOffset,
+            rangeLength: change.rangeLength,
+            text: change.text,
+        },
+        getLatexContextOptions()
+    );
+
+    if (!plan.handled) {
+        return false;
+    }
+
+    applyingLatexEdit = true;
+    try {
+        return await editor.edit(
+            (editBuilder) => {
+                for (let edit of plan.edits) {
+                    editBuilder.replace(
+                        new vscode.Range(
+                            editor.document.positionAt(edit.start),
+                            editor.document.positionAt(edit.end)
+                        ),
+                        edit.text
+                    );
+                }
+            },
+            { undoStopBefore: false, undoStopAfter: false }
+        );
+    } finally {
+        applyingLatexEdit = false;
+    }
+}
+
 async function nextSnippetPlaceholder() {
     if (SNIPPET_STACK[0] && !SNIPPET_STACK[0].nextPlaceholder()) {
         SNIPPET_STACK.shift();
@@ -315,6 +388,126 @@ async function convertEnvironment(editor: vscode.TextEditor) {
     }
 }
 
+async function renameMatchingEnvironment(editor: vscode.TextEditor) {
+    let text = editor.document.getText();
+    let offset = editor.document.offsetAt(editor.selection.active);
+    let pair = findLatexEnvironmentPairAt(text, offset, getLatexContextOptions());
+    if (!pair) {
+        vscode.window.showInformationMessage('No LaTeX environment found at the cursor.');
+        return;
+    }
+
+    let targetName = await vscode.window.showInputBox({
+        prompt: `Rename matching \\begin/\\end for ${pair.name}`,
+        value: pair.name,
+        ignoreFocusOut: true,
+        validateInput(value) {
+            return isValidEnvironmentName(value.trim()) ? undefined : 'Environment name cannot be empty or contain braces/whitespace.';
+        },
+    });
+    if (targetName === undefined) {
+        return;
+    }
+
+    let plan = createEnvironmentNameOnlyRenamePlan(pair, targetName);
+    if (!plan.handled) {
+        return;
+    }
+
+    let inserted = await applyEdits(editor, plan.edits);
+    if (inserted && typeof plan.cursorOffset == 'number') {
+        let newPosition = editor.document.positionAt(plan.cursorOffset);
+        editor.selection = new vscode.Selection(newPosition, newPosition);
+        editor.revealRange(new vscode.Range(newPosition, newPosition));
+    }
+}
+
+async function pickMathStructureTarget() {
+    let target = await vscode.window.showQuickPick(
+        WRAPPABLE_MATH_ENVIRONMENTS.map((environment) => ({
+            label: environment,
+            description: isTableLikeEnvironment(environment) ? 'matrix/table-like environment' : 'math environment',
+        })),
+        { placeHolder: 'Wrap with...' }
+    );
+    return target?.label;
+}
+
+async function getTargetArgumentsIfNeeded(targetName: string) {
+    if (!isTableLikeEnvironment(targetName)) {
+        return '';
+    }
+
+    let columnSpec = await vscode.window.showInputBox({
+        prompt: `Column specification for ${targetName}`,
+        value: 'c',
+        ignoreFocusOut: true,
+    });
+    if (columnSpec === undefined) {
+        return undefined;
+    }
+    return formatTableArguments(targetName, columnSpec);
+}
+
+async function wrapMathStructure(editor: vscode.TextEditor) {
+    let targetName = await pickMathStructureTarget();
+    if (!targetName) {
+        return;
+    }
+
+    let targetArguments = await getTargetArgumentsIfNeeded(targetName);
+    if (targetArguments === undefined) {
+        return;
+    }
+
+    let text = editor.document.getText();
+    let selection = editor.selection;
+    let selectionStart = editor.document.offsetAt(selection.start);
+    let selectionEnd = editor.document.offsetAt(selection.end);
+    let plan = !selection.isEmpty
+        ? createWrapEnvironmentPlan(text, selectionStart, selectionEnd, targetName, targetArguments)
+        : createWrapCurrentMathStructurePlan(
+            text,
+            editor.document.offsetAt(selection.active),
+            targetName,
+            targetArguments,
+            getLatexContextOptions()
+        );
+
+    if (!plan.handled) {
+        vscode.window.showInformationMessage('Select text or place the cursor inside a math structure to wrap.');
+        return;
+    }
+
+    let inserted = await applyEdits(editor, plan.edits);
+    if (inserted && typeof plan.cursorOffset == 'number') {
+        let newPosition = editor.document.positionAt(plan.cursorOffset);
+        editor.selection = new vscode.Selection(newPosition, newPosition);
+        editor.revealRange(new vscode.Range(newPosition, newPosition));
+    }
+}
+
+async function unwrapMathStructure(editor: vscode.TextEditor) {
+    let text = editor.document.getText();
+    let plan = createUnwrapMathStructurePlan(
+        text,
+        editor.document.offsetAt(editor.selection.active),
+        getLatexContextOptions()
+    );
+
+    if (!plan.handled) {
+        vscode.window.showInformationMessage('No supported math structure found at the cursor.');
+        return;
+    }
+
+    let inserted = await applyEdits(editor, plan.edits);
+    if (inserted && typeof plan.cursorOffset == 'number') {
+        let newPosition = editor.document.positionAt(plan.cursorOffset);
+        editor.selection = new vscode.Selection(newPosition, newPosition);
+        editor.revealRange(new vscode.Range(newPosition, newPosition));
+    }
+}
+
 async function loadSnippets() {
     SNIPPETS_BY_LANGUAGE.clear();
 
@@ -323,15 +516,14 @@ async function loadSnippets() {
         mkdirSync(snippetDir);
     }
 
-    for (let file of readdirSync(snippetDir)) {
-        if (path.extname(file).toLowerCase() != '.hsnips') continue;
-
-        let filePath = path.join(snippetDir, file);
-        let fileData = readFileSync(filePath, 'utf8');
-
-        let language = path.basename(file, '.hsnips').toLowerCase();
-
-        SNIPPETS_BY_LANGUAGE.set(language, parse(fileData));
+    for (let entry of getSnippetFilesForProfile(snippetDir, getActiveSnippetProfile())) {
+        let fileData = readFileSync(entry.filePath, 'utf8');
+        let snippetList = SNIPPETS_BY_LANGUAGE.get(entry.language);
+        if (!snippetList) {
+            snippetList = [];
+            SNIPPETS_BY_LANGUAGE.set(entry.language, snippetList);
+        }
+        snippetList.push(...parse(fileData));
     }
 
     let globalSnippets = SNIPPETS_BY_LANGUAGE.get('all');
@@ -345,6 +537,55 @@ async function loadSnippets() {
     for (let snippetList of SNIPPETS_BY_LANGUAGE.values()) {
         snippetList.sort((a, b) => b.priority - a.priority);
     }
+}
+
+async function selectSnippetProfile() {
+    let snippetDir = getSnippetDir();
+    if (!existsSync(snippetDir)) {
+        mkdirSync(snippetDir);
+    }
+
+    let activeProfile = getActiveSnippetProfile();
+    let profiles = discoverSnippetProfiles(snippetDir);
+    let picked = await vscode.window.showQuickPick(
+        [
+            {
+                label: 'Base only',
+                description: activeProfile ? undefined : 'current',
+                profile: '',
+            },
+            ...profiles.map((profile) => ({
+                label: profile,
+                description: profile == activeProfile ? 'current' : undefined,
+                profile,
+            })),
+        ],
+        { placeHolder: 'Select active snippet profile' }
+    );
+
+    if (!picked) {
+        return;
+    }
+
+    await vscode.workspace
+        .getConfiguration('hsnips')
+        .update('profiles.activeProfile', picked.profile, vscode.ConfigurationTarget.Global);
+    await loadSnippets();
+    vscode.window.showInformationMessage(
+        picked.profile ? `Yiqi's LatexSnips profile: ${picked.profile}` : "Yiqi's LatexSnips profile: base only"
+    );
+}
+
+async function openActiveSnippetProfile() {
+    let snippetDir = getSnippetDir();
+    let activeProfile = getActiveSnippetProfile();
+    if (!activeProfile) {
+        vscode.window.showInformationMessage('No active snippet profile selected. Opening the base snippets directory.');
+        openExplorer(snippetDir);
+        return;
+    }
+
+    openExplorer(ensureProfileDir(snippetDir, activeProfile));
 }
 
 // This function may be called after a snippet expansion, in which case the original text was
@@ -390,8 +631,14 @@ export async function expandSnippet(
 
 export function activate(context: vscode.ExtensionContext) {
     loadSnippets();
+    if (vscode.window.activeTextEditor) {
+        DOCUMENT_TEXT_CACHE.set(
+            vscode.window.activeTextEditor.document,
+            vscode.window.activeTextEditor.document.getText()
+        );
+    }
     updateMathContext(vscode.window.activeTextEditor);
-    registerSnippetManager(context, loadSnippets);
+    registerSnippetManager(context, loadSnippets, getActiveSnippetProfile);
 
     context.subscriptions.push(
         vscode.commands.registerCommand('hsnips.openSnippetsDir', () => openExplorer(getSnippetDir()))
@@ -412,6 +659,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('hsnips.reloadSnippets', () => loadSnippets())
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('hsnips.selectProfile', () => selectSnippetProfile())
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('hsnips.openActiveProfile', () => openActiveSnippetProfile())
     );
 
     context.subscriptions.push(
@@ -461,6 +716,24 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerTextEditorCommand('hsnips.renameMatchingEnvironment', (editor) => {
+            return renameMatchingEnvironment(editor);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerTextEditorCommand('hsnips.wrapMathStructure', (editor) => {
+            return wrapMathStructure(editor);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerTextEditorCommand('hsnips.unwrapMathStructure', (editor) => {
+            return unwrapMathStructure(editor);
+        })
+    );
+
+    context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument((document) => {
             if (document.languageId == 'hsnips') {
                 loadSnippets();
@@ -500,45 +773,65 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Forward all document changes so that the active snippet can update its related blocks.
     context.subscriptions.push(
-        vscode.workspace.onDidChangeTextDocument((e) => {
+        vscode.workspace.onDidChangeTextDocument(async (e) => {
+            let previousText = DOCUMENT_TEXT_CACHE.get(e.document);
+            let currentText = e.document.getText();
             let activeEditor = vscode.window.activeTextEditor;
-            if (activeEditor && e.document == activeEditor.document) {
-                updateMathContext(activeEditor);
-            }
+            try {
+                if (activeEditor && e.document == activeEditor.document) {
+                    updateMathContext(activeEditor);
+                }
 
-            if (SNIPPET_STACK.length && SNIPPET_STACK[0].editor.document == e.document) {
-                SNIPPET_STACK[0].update(e.contentChanges);
-            }
+                if (SNIPPET_STACK.length && SNIPPET_STACK[0].editor.document == e.document) {
+                    SNIPPET_STACK[0].update(e.contentChanges);
+                }
 
-            if (insertingSnippet) return;
+                if (insertingSnippet) return;
 
-            let mainChange = e.contentChanges[0];
+                let mainChange = e.contentChanges[0];
 
-            if (!mainChange) return;
+                if (!mainChange) return;
 
-            if (activeEditor && e.document == activeEditor.document && isPlainEnterChange(mainChange)) {
-                void recoverSmartEnterAfterPlainEnter(activeEditor, mainChange).then(undefined, console.error);
-                return;
-            }
+                if (
+                    activeEditor &&
+                    e.document == activeEditor.document &&
+                    e.contentChanges.length == 1 &&
+                    await recoverEnvironmentNameSyncAfterChange(
+                        activeEditor,
+                        mainChange,
+                        previousText || getTextBeforeChange(currentText, mainChange),
+                        currentText
+                    )
+                ) {
+                    return;
+                }
 
-            // Let's try to detect only events that come from keystrokes.
-            if (mainChange.text.length != 1) return;
+                if (activeEditor && e.document == activeEditor.document && isPlainEnterChange(mainChange)) {
+                    void recoverSmartEnterAfterPlainEnter(activeEditor, mainChange).then(undefined, console.error);
+                    return;
+                }
 
-            let snippets = SNIPPETS_BY_LANGUAGE.get(e.document.languageId.toLowerCase());
-            if (!snippets) snippets = SNIPPETS_BY_LANGUAGE.get('all');
-            if (!snippets) return;
-            let editor = vscode.window.activeTextEditor;
-            if (!editor || e.document != editor.document) return;
+                // Let's try to detect only events that come from keystrokes.
+                if (mainChange.text.length != 1) return;
 
-            let latexContext = getEditorLatexContext(editor);
-            snippets = snippets.filter((snippet) => canExpandSnippetInContext(snippet, latexContext));
+                let snippets = SNIPPETS_BY_LANGUAGE.get(e.document.languageId.toLowerCase());
+                if (!snippets) snippets = SNIPPETS_BY_LANGUAGE.get('all');
+                if (!snippets) return;
+                let editor = vscode.window.activeTextEditor;
+                if (!editor || e.document != editor.document) return;
 
-            let mainChangePosition = mainChange.range.start.translate(0, mainChange.text.length);
-            let completion = getAutomaticCompletion(e.document, mainChangePosition, snippets);
+                let latexContext = getEditorLatexContext(editor);
+                snippets = snippets.filter((snippet) => canExpandSnippetInContext(snippet, latexContext));
 
-            if (completion) {
-                expandSnippet(completion, editor);
-                return;
+                let mainChangePosition = mainChange.range.start.translate(0, mainChange.text.length);
+                let completion = getAutomaticCompletion(e.document, mainChangePosition, snippets);
+
+                if (completion) {
+                    expandSnippet(completion, editor);
+                    return;
+                }
+            } finally {
+                DOCUMENT_TEXT_CACHE.set(e.document, e.document.getText());
             }
         })
     );
@@ -553,6 +846,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
+            if (editor) {
+                DOCUMENT_TEXT_CACHE.set(editor.document, editor.document.getText());
+            }
             updateMathContext(editor);
         })
     );
@@ -575,6 +871,9 @@ export function activate(context: vscode.ExtensionContext) {
                 latexContextCache = undefined;
                 latexContextOptionsCache = undefined;
                 updateMathContext(vscode.window.activeTextEditor);
+            }
+            if (event.affectsConfiguration('hsnips.profiles.activeProfile')) {
+                loadSnippets();
             }
         })
     );

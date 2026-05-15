@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check-and-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check
+        run: npm run check
+
+      - name: Prepare Monaco runtime
+        run: npm run prepare-monaco
+
+      - name: Package VSIX
+        run: npx --yes @vscode/vsce package --out yiqis-latexsnips.vsix
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: yiqis-latexsnips-vsix
+          path: yiqis-latexsnips.vsix

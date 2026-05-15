@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import { getSnippetDir } from './utils';
 import {
@@ -7,6 +7,7 @@ import {
   parseSnippetDocument,
   SnippetDocument,
 } from './snippetDocument';
+import { getSnippetFilesForProfile } from './snippetProfiles';
 
 interface SnippetManagerMessage {
   type: string;
@@ -18,6 +19,11 @@ interface SnippetManagerMessage {
   requestId?: number;
 }
 
+interface SnippetManagerDocument extends SnippetDocument {
+  sourceScope?: 'base' | 'profile';
+  profile?: string;
+}
+
 function getNonce() {
   let text = '';
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -27,28 +33,29 @@ function getNonce() {
   return text;
 }
 
-export function readSnippetDocuments(snippetDir = getSnippetDir()) {
+export function readSnippetDocuments(snippetDir = getSnippetDir(), activeProfile = '') {
   if (!existsSync(snippetDir)) {
     mkdirSync(snippetDir, { recursive: true });
   }
 
-  return readdirSync(snippetDir)
-    .filter((file) => path.extname(file).toLowerCase() == '.hsnips')
-    .sort((a, b) => a.localeCompare(b))
-    .map((file) => {
-      let filePath = path.join(snippetDir, file);
-      let content = readFileSync(filePath, 'utf8');
-      let stat = statSync(filePath);
-      let document = parseSnippetDocument(content, filePath, path.basename(file, '.hsnips'));
+  return getSnippetFilesForProfile(snippetDir, activeProfile)
+    .map((entry) => {
+      let content = readFileSync(entry.filePath, 'utf8');
+      let stat = statSync(entry.filePath);
+      let document = parseSnippetDocument(content, entry.filePath, entry.language) as SnippetManagerDocument;
       document.mtimeMs = stat.mtimeMs;
+      document.sourceScope = entry.scope;
+      document.profile = entry.profile;
       return document;
     });
 }
 
-function toWebviewDocument(document: SnippetDocument, savedHash = document.hash) {
+function toWebviewDocument(document: SnippetManagerDocument, savedHash = document.hash) {
   return {
     filePath: document.filePath,
     fileName: path.basename(document.filePath),
+    sourceScope: document.sourceScope || 'base',
+    profile: document.profile || '',
     language: document.language,
     savedHash,
     contentHash: document.hash,
@@ -76,8 +83,9 @@ function toWebviewDocument(document: SnippetDocument, savedHash = document.hash)
   };
 }
 
-function getWebviewState(documents: SnippetDocument[]) {
+function getWebviewState(documents: SnippetManagerDocument[], activeProfile = '') {
   return {
+    activeProfile,
     documents: documents.map((document) => toWebviewDocument(document)),
   };
 }
@@ -89,10 +97,11 @@ function escapeScriptJson(value: unknown) {
 function getHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
-  documents: SnippetDocument[]
+  documents: SnippetDocument[],
+  activeProfile = ''
 ) {
   let nonce = getNonce();
-  let state = escapeScriptJson(getWebviewState(documents));
+  let state = escapeScriptJson(getWebviewState(documents, activeProfile));
   let monacoVsUri = vscode.Uri.joinPath(extensionUri, 'media', 'monaco', 'vs');
   let monacoBaseUri = webview.asWebviewUri(monacoVsUri).toString();
   let monacoLoaderUri = webview
@@ -481,8 +490,9 @@ function getHtml(
         const option = document.createElement('option');
         const counts = diagnosticCounts(doc);
         option.value = doc.filePath;
+        const sourceLabel = doc.sourceScope === 'profile' ? 'profile:' + doc.profile : 'base';
         option.textContent = (dirtyFiles.has(doc.filePath) ? '* ' : '') +
-          doc.fileName + ' (' + doc.snippets.length + ', ' +
+          doc.fileName + ' · ' + sourceLabel + ' (' + doc.snippets.length + ', ' +
           (counts.error + counts.warning) + ' issues)';
         fileSelect.appendChild(option);
       }
@@ -497,7 +507,8 @@ function getHtml(
       }
       const counts = diagnosticCounts(doc);
       const left = document.createElement('span');
-      left.textContent = snippets.length + ' / ' + doc.snippets.length + ' snippets';
+      left.textContent = snippets.length + ' / ' + doc.snippets.length + ' snippets · profile: ' +
+        (state.activeProfile || 'base');
       const right = document.createElement('span');
       right.innerHTML =
         '<span class="count error">' + counts.error + ' errors</span> · ' +
@@ -940,13 +951,18 @@ function analyzeSnippetDocument(message: SnippetManagerMessage) {
 
 export function registerSnippetManager(
   context: vscode.ExtensionContext,
-  reloadSnippets: () => void | Promise<void>
+  reloadSnippets: () => void | Promise<void>,
+  getActiveProfile: () => string
 ) {
   let panel: vscode.WebviewPanel | undefined;
 
   function postState() {
     if (!panel) return;
-    panel.webview.postMessage({ type: 'state', state: getWebviewState(readSnippetDocuments()) });
+    let activeProfile = getActiveProfile();
+    panel.webview.postMessage({
+      type: 'state',
+      state: getWebviewState(readSnippetDocuments(getSnippetDir(), activeProfile), activeProfile),
+    });
   }
 
   async function refresh() {
@@ -954,6 +970,14 @@ export function registerSnippetManager(
     await reloadSnippets();
     postState();
   }
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('hsnips.profiles.activeProfile')) {
+        void refresh();
+      }
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('hsnips.openSnippetManager', async () => {
@@ -974,7 +998,13 @@ export function registerSnippetManager(
           localResourceRoots: [monacoRoot],
         }
       );
-      panel.webview.html = getHtml(panel.webview, context.extensionUri, readSnippetDocuments());
+      let activeProfile = getActiveProfile();
+      panel.webview.html = getHtml(
+        panel.webview,
+        context.extensionUri,
+        readSnippetDocuments(getSnippetDir(), activeProfile),
+        activeProfile
+      );
 
       panel.onDidDispose(() => {
         panel = undefined;

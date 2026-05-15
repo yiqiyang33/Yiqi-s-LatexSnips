@@ -1,4 +1,7 @@
 import * as assert from 'assert';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
   getLatexContext,
   getOpenLatexEnvironmentStack,
@@ -9,8 +12,13 @@ import {
   TextEdit,
 } from '../latexEdit';
 import {
+  createEnvironmentNameOnlyRenamePlan,
+  createEnvironmentNameSyncPlan,
   createEnvironmentConversionPlan,
+  createUnwrapMathStructurePlan,
+  createWrapCurrentMathStructurePlan,
   createWrapEnvironmentPlan,
+  findLatexEnvironmentPairAt,
   formatTableArguments,
 } from '../environmentConvert';
 import {
@@ -21,6 +29,10 @@ import {
   hashText,
   parseSnippetDocument,
 } from '../snippetDocument';
+import {
+  discoverSnippetProfiles,
+  getSnippetFilesForProfile,
+} from '../snippetProfiles';
 import { parse } from '../parser';
 
 function marked(input: string) {
@@ -267,6 +279,218 @@ a &= b
   );
 }
 
+function testEnvironmentNameSync() {
+  let beforeBeginEdit = String.raw`\begin{align}
+a &= b
+\end{align}`;
+  let insertAtBeginNameEnd = beforeBeginEdit.indexOf('align') + 'align'.length;
+  let afterBeginEdit = (
+    beforeBeginEdit.slice(0, insertAtBeginNameEnd) +
+    'ed' +
+    beforeBeginEdit.slice(insertAtBeginNameEnd)
+  );
+  assert.strictEqual(
+    applyTextEdits(
+      afterBeginEdit,
+      createEnvironmentNameSyncPlan(beforeBeginEdit, afterBeginEdit, {
+        rangeOffset: insertAtBeginNameEnd,
+        rangeLength: 0,
+        text: 'ed',
+      }).edits
+    ),
+    String.raw`\begin{aligned}
+a &= b
+\end{aligned}`
+  );
+
+  let beforeBeginDelete = String.raw`\begin{aligned}
+a &= b
+\end{aligned}`;
+  let deleteAtBeginNameEnd = beforeBeginDelete.indexOf('aligned') + 'align'.length;
+  let afterBeginDelete = (
+    beforeBeginDelete.slice(0, deleteAtBeginNameEnd) +
+    beforeBeginDelete.slice(deleteAtBeginNameEnd + 2)
+  );
+  assert.strictEqual(
+    applyTextEdits(
+      afterBeginDelete,
+      createEnvironmentNameSyncPlan(beforeBeginDelete, afterBeginDelete, {
+        rangeOffset: deleteAtBeginNameEnd,
+        rangeLength: 2,
+        text: '',
+      }).edits
+    ),
+    String.raw`\begin{align}
+a &= b
+\end{align}`
+  );
+
+  let beforeEndEdit = String.raw`\begin{align}
+a &= b
+\end{align}`;
+  let insertAtEndNameEnd = beforeEndEdit.lastIndexOf('align') + 'align'.length;
+  let afterEndEdit = (
+    beforeEndEdit.slice(0, insertAtEndNameEnd) +
+    'ed' +
+    beforeEndEdit.slice(insertAtEndNameEnd)
+  );
+  assert.strictEqual(
+    applyTextEdits(
+      afterEndEdit,
+      createEnvironmentNameSyncPlan(beforeEndEdit, afterEndEdit, {
+        rangeOffset: insertAtEndNameEnd,
+        rangeLength: 0,
+        text: 'ed',
+      }).edits
+    ),
+    String.raw`\begin{aligned}
+a &= b
+\end{aligned}`
+  );
+
+  let beforeEndDelete = String.raw`\begin{aligned}
+a &= b
+\end{aligned}`;
+  let deleteAtEndNameEnd = beforeEndDelete.lastIndexOf('aligned') + 'align'.length;
+  let afterEndDelete = (
+    beforeEndDelete.slice(0, deleteAtEndNameEnd) +
+    beforeEndDelete.slice(deleteAtEndNameEnd + 2)
+  );
+  assert.strictEqual(
+    applyTextEdits(
+      afterEndDelete,
+      createEnvironmentNameSyncPlan(beforeEndDelete, afterEndDelete, {
+        rangeOffset: deleteAtEndNameEnd,
+        rangeLength: 2,
+        text: '',
+      }).edits
+    ),
+    String.raw`\begin{align}
+a &= b
+\end{align}`
+  );
+
+  let nested = String.raw`\begin{outer}
+\begin{inner}
+x
+\end{inner}
+\end{outer}`;
+  let nestedInsert = nested.indexOf('inner') + 'inner'.length;
+  let nestedAfter = nested.slice(0, nestedInsert) + 'x' + nested.slice(nestedInsert);
+  assert.strictEqual(
+    applyTextEdits(
+      nestedAfter,
+      createEnvironmentNameSyncPlan(nested, nestedAfter, {
+        rangeOffset: nestedInsert,
+        rangeLength: 0,
+        text: 'x',
+      }).edits
+    ),
+    String.raw`\begin{outer}
+\begin{innerx}
+x
+\end{innerx}
+\end{outer}`
+  );
+
+  let commented = String.raw`% \begin{align}
+text
+% \end{align}`;
+  let commentedInsert = commented.indexOf('align') + 'align'.length;
+  let commentedAfter = commented.slice(0, commentedInsert) + 'ed' + commented.slice(commentedInsert);
+  assert.strictEqual(
+    createEnvironmentNameSyncPlan(commented, commentedAfter, {
+      rangeOffset: commentedInsert,
+      rangeLength: 0,
+      text: 'ed',
+    }).handled,
+    false
+  );
+
+  let verbatim = String.raw`\begin{verbatim}
+\begin{align}
+x
+\end{align}
+\end{verbatim}`;
+  let verbatimInsert = verbatim.indexOf('align') + 'align'.length;
+  let verbatimAfter = verbatim.slice(0, verbatimInsert) + 'ed' + verbatim.slice(verbatimInsert);
+  assert.strictEqual(
+    createEnvironmentNameSyncPlan(verbatim, verbatimAfter, {
+      rangeOffset: verbatimInsert,
+      rangeLength: 0,
+      text: 'ed',
+    }).handled,
+    false
+  );
+
+  let { text, offset } = marked(String.raw`\begin{align}
+a &= b|
+\end{align}`);
+  let environmentPair = findLatexEnvironmentPairAt(text, offset);
+  assert.ok(environmentPair);
+  let pair = createEnvironmentNameOnlyRenamePlan(environmentPair, 'aligned');
+  assert.strictEqual(
+    applyTextEdits(text, pair.edits),
+    String.raw`\begin{aligned}
+a &= b
+\end{aligned}`
+  );
+}
+
+function testWrapUnwrapMathStructure() {
+  let display = marked(String.raw`\[
+a &= b|
+\]`);
+  assert.strictEqual(
+    applyTextEdits(
+      display.text,
+      createWrapCurrentMathStructurePlan(display.text, display.offset, 'aligned').edits
+    ),
+    String.raw`\[
+\begin{aligned}
+a &= b
+\end{aligned}
+\]`
+  );
+
+  let env = marked(String.raw`\begin{equation}
+x + y|
+\end{equation}`);
+  assert.strictEqual(
+    applyTextEdits(
+      env.text,
+      createWrapCurrentMathStructurePlan(env.text, env.offset, 'split').edits
+    ),
+    String.raw`\begin{equation}
+\begin{split}
+x + y
+\end{split}
+\end{equation}`
+  );
+
+  let unwrapEnv = marked(String.raw`\begin{aligned}
+a &= b|
+\end{aligned}`);
+  assert.strictEqual(
+    applyTextEdits(
+      unwrapEnv.text,
+      createUnwrapMathStructurePlan(unwrapEnv.text, unwrapEnv.offset).edits
+    ),
+    'a &= b'
+  );
+
+  let unwrapDisplay = marked(String.raw`\[
+a &= b|
+\]`);
+  assert.strictEqual(
+    applyTextEdits(
+      unwrapDisplay.text,
+      createUnwrapMathStructurePlan(unwrapDisplay.text, unwrapDisplay.offset).edits
+    ),
+    'a &= b'
+  );
+}
+
 function testSnippetDocument() {
   let content = [
     'priority 10',
@@ -347,13 +571,84 @@ function testTextOnlySnippetFlag() {
   assert.strictEqual(snippets[0].math, false);
 }
 
+function testSnippetProfiles() {
+  let tempDir = mkdtempSync(path.join(os.tmpdir(), 'yiqi-snips-'));
+  try {
+    writeFileSync(
+      path.join(tempDir, 'latex.hsnips'),
+      [
+        'snippet base "Base" A',
+        '\\base',
+        'endsnippet',
+      ].join('\n')
+    );
+    writeFileSync(
+      path.join(tempDir, 'all.hsnips'),
+      [
+        'priority 5',
+        'snippet allbase "All Base" A',
+        '\\allbase',
+        'endsnippet',
+      ].join('\n')
+    );
+    mkdirSync(path.join(tempDir, 'profiles', 'notes'), { recursive: true });
+    writeFileSync(
+      path.join(tempDir, 'profiles', 'notes', 'latex.hsnips'),
+      [
+        'priority 10',
+        'snippet prof "Profile" A',
+        '\\prof',
+        'endsnippet',
+      ].join('\n')
+    );
+    writeFileSync(
+      path.join(tempDir, 'profiles', 'notes', 'all.hsnips'),
+      [
+        'snippet allprof "All Profile" A',
+        '\\allprof',
+        'endsnippet',
+      ].join('\n')
+    );
+
+    assert.deepStrictEqual(discoverSnippetProfiles(tempDir), ['notes']);
+    assert.deepStrictEqual(
+      getSnippetFilesForProfile(tempDir).map((entry) => entry.language),
+      ['all', 'latex']
+    );
+
+    let profileEntries = getSnippetFilesForProfile(tempDir, 'notes');
+    assert.deepStrictEqual(
+      profileEntries.map((entry) => `${entry.scope}:${entry.language}`),
+      ['base:all', 'base:latex', 'profile:all', 'profile:latex']
+    );
+
+    let latexSnippets = profileEntries
+      .filter((entry) => entry.language == 'latex')
+      .flatMap((entry) => parse(readFileSync(entry.filePath, 'utf8')));
+    let allSnippets = profileEntries
+      .filter((entry) => entry.language == 'all')
+      .flatMap((entry) => parse(readFileSync(entry.filePath, 'utf8')));
+    latexSnippets.push(...allSnippets);
+    latexSnippets.sort((a, b) => b.priority - a.priority);
+    assert.deepStrictEqual(
+      latexSnippets.map((snippet) => snippet.trigger),
+      ['prof', 'allbase', 'base', 'allprof']
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 testEnvironmentStack();
 testMathContext();
 testSmartEnter();
 testSmartEnterRecovery();
 testAlignmentTab();
 testEnvironmentConversion();
+testEnvironmentNameSync();
+testWrapUnwrapMathStructure();
 testSnippetDocument();
 testTextOnlySnippetFlag();
+testSnippetProfiles();
 
 console.log('latex edit tests passed');

@@ -30,6 +30,19 @@ export const CONVERTIBLE_ENVIRONMENTS = [
   'longtable',
 ];
 
+export const WRAPPABLE_MATH_ENVIRONMENTS = [
+  'aligned',
+  'cases',
+  'split',
+  'matrix',
+  'pmatrix',
+  'bmatrix',
+  'equation',
+  'equation*',
+  'align',
+  'align*',
+];
+
 const TABLE_LIKE_ENVIRONMENTS = [
   'array',
   'tabular',
@@ -71,6 +84,12 @@ export interface ConversionPlan {
   handled: boolean;
   edits: TextEdit[];
   cursorOffset?: number;
+}
+
+export interface SingleTextChange {
+  rangeOffset: number;
+  rangeLength: number;
+  text: string;
 }
 
 interface BeginToken {
@@ -352,6 +371,35 @@ function getBeginArgumentsRange(pair: LatexEnvironmentPair) {
   };
 }
 
+export function getEnvironmentBodyRange(pair: LatexEnvironmentPair) {
+  let bodyStart = pair.beginArguments.length > 0
+    ? pair.beginArguments[pair.beginArguments.length - 1].end
+    : pair.beginEnd;
+  return {
+    start: bodyStart,
+    end: pair.endStart,
+  };
+}
+
+export function createEnvironmentNameOnlyRenamePlan(
+  pair: LatexEnvironmentPair,
+  targetName: string
+): ConversionPlan {
+  let name = targetName.trim();
+  if (!isValidEnvironmentName(name) || pair.name == name) {
+    return { handled: false, edits: [] };
+  }
+
+  return {
+    handled: true,
+    edits: [
+      { start: pair.beginNameStart, end: pair.beginNameEnd, text: name },
+      { start: pair.endNameStart, end: pair.endNameEnd, text: name },
+    ],
+    cursorOffset: pair.beginStart,
+  };
+}
+
 export function createEnvironmentRenamePlan(
   text: string,
   pair: LatexEnvironmentPair,
@@ -426,6 +474,93 @@ export function createWrapEnvironmentPlan(
   };
 }
 
+function createWrapBodyPlan(
+  text: string,
+  start: number,
+  end: number,
+  targetName: string,
+  targetArguments = ''
+): ConversionPlan {
+  let body = trimOneOuterNewline(text.slice(start, end));
+  let prefix = text[start] == '\n' ? '\n' : '';
+  let suffix = text[end - 1] == '\n' ? '\n' : '';
+  let begin = `\\begin{${targetName}}${targetArguments}`;
+  let replacement = `${prefix}${begin}\n${body}\n\\end{${targetName}}${suffix}`;
+  return {
+    handled: true,
+    edits: [{ start, end, text: replacement }],
+    cursorOffset: start + prefix.length + begin.length + 1,
+  };
+}
+
+export function createWrapCurrentMathStructurePlan(
+  text: string,
+  offset: number,
+  targetName: string,
+  targetArguments = '',
+  options: LatexContextOptions = {}
+): ConversionPlan {
+  let environmentPair = findLatexEnvironmentPairAt(text, offset, options);
+  if (environmentPair) {
+    let bodyRange = getEnvironmentBodyRange(environmentPair);
+    return createWrapBodyPlan(text, bodyRange.start, bodyRange.end, targetName, targetArguments);
+  }
+
+  let delimiterPair = findDisplayMathDelimiterAt(text, offset);
+  if (delimiterPair) {
+    return createWrapBodyPlan(text, delimiterPair.openEnd, delimiterPair.closeStart, targetName, targetArguments);
+  }
+
+  return { handled: false, edits: [] };
+}
+
+function trimOneOuterNewlinePair(text: string) {
+  if (text.startsWith('\n')) {
+    text = text.slice(1);
+  }
+  if (text.endsWith('\n')) {
+    text = text.slice(0, -1);
+  }
+  return text;
+}
+
+export function createUnwrapEnvironmentPlan(text: string, pair: LatexEnvironmentPair): ConversionPlan {
+  let bodyRange = getEnvironmentBodyRange(pair);
+  let body = trimOneOuterNewlinePair(text.slice(bodyRange.start, bodyRange.end));
+  return {
+    handled: true,
+    edits: [{ start: pair.beginStart, end: pair.endEnd, text: body }],
+    cursorOffset: pair.beginStart,
+  };
+}
+
+export function createUnwrapDelimiterPlan(text: string, pair: MathDelimiterPair): ConversionPlan {
+  let body = trimOneOuterNewlinePair(text.slice(pair.openEnd, pair.closeStart));
+  return {
+    handled: true,
+    edits: [{ start: pair.openStart, end: pair.closeEnd, text: body }],
+    cursorOffset: pair.openStart,
+  };
+}
+
+export function createUnwrapMathStructurePlan(
+  text: string,
+  offset: number,
+  options: LatexContextOptions = {}
+): ConversionPlan {
+  let environmentPair = findLatexEnvironmentPairAt(text, offset, options);
+  if (environmentPair && WRAPPABLE_MATH_ENVIRONMENTS.indexOf(environmentPair.name) != -1) {
+    return createUnwrapEnvironmentPlan(text, environmentPair);
+  }
+
+  let delimiterPair = findDisplayMathDelimiterAt(text, offset);
+  if (delimiterPair) {
+    return createUnwrapDelimiterPlan(text, delimiterPair);
+  }
+
+  return { handled: false, edits: [] };
+}
+
 export function createEnvironmentConversionPlan(
   text: string,
   offset: number,
@@ -441,6 +576,91 @@ export function createEnvironmentConversionPlan(
   let delimiterPair = findDisplayMathDelimiterAt(text, offset);
   if (delimiterPair) {
     return createDelimiterConversionPlan(text, delimiterPair, targetName, targetArguments);
+  }
+
+  return { handled: false, edits: [] };
+}
+
+function isChangeInRange(change: SingleTextChange, start: number, end: number) {
+  let changeStart = change.rangeOffset;
+  let changeEnd = change.rangeOffset + change.rangeLength;
+  if (change.rangeLength == 0) {
+    return start <= changeStart && changeStart <= end;
+  }
+  return changeStart < end && changeEnd > start;
+}
+
+function mapOffsetAfterChange(offset: number, change: SingleTextChange) {
+  let changeStart = change.rangeOffset;
+  let changeEnd = change.rangeOffset + change.rangeLength;
+  let delta = change.text.length - change.rangeLength;
+  if (offset <= changeStart) {
+    return offset;
+  }
+  if (offset >= changeEnd) {
+    return offset + delta;
+  }
+  return changeStart + change.text.length;
+}
+
+function mapRangeAfterChange(start: number, end: number, change: SingleTextChange) {
+  if (change.rangeLength == 0) {
+    let delta = change.text.length;
+    if (change.rangeOffset < start) {
+      return { start: start + delta, end: end + delta };
+    }
+    if (change.rangeOffset <= end) {
+      return { start, end: end + delta };
+    }
+    return { start, end };
+  }
+
+  return {
+    start: mapOffsetAfterChange(start, change),
+    end: mapOffsetAfterChange(end, change),
+  };
+}
+
+export function isValidEnvironmentName(name: string) {
+  return /^[^{}\s]+$/.test(name);
+}
+
+export function createEnvironmentNameSyncPlan(
+  beforeText: string,
+  afterText: string,
+  change: SingleTextChange,
+  options: LatexContextOptions = {}
+): ConversionPlan {
+  let pairsToCheck = [
+    findLatexEnvironmentPairAt(beforeText, change.rangeOffset, options),
+    findLatexEnvironmentPairAt(beforeText, change.rangeOffset + change.rangeLength, options),
+  ].filter((pair): pair is LatexEnvironmentPair => Boolean(pair));
+
+  for (let pair of pairsToCheck) {
+    let editedBegin = isChangeInRange(change, pair.beginNameStart, pair.beginNameEnd);
+    let editedEnd = isChangeInRange(change, pair.endNameStart, pair.endNameEnd);
+    if (editedBegin == editedEnd) {
+      continue;
+    }
+
+    let editedStart = editedBegin ? pair.beginNameStart : pair.endNameStart;
+    let editedEndOffset = editedBegin ? pair.beginNameEnd : pair.endNameEnd;
+    let targetStart = editedBegin ? pair.endNameStart : pair.beginNameStart;
+    let targetEnd = editedBegin ? pair.endNameEnd : pair.beginNameEnd;
+    let mappedEdited = mapRangeAfterChange(editedStart, editedEndOffset, change);
+    let mappedTarget = mapRangeAfterChange(targetStart, targetEnd, change);
+    let nextName = afterText.slice(mappedEdited.start, mappedEdited.end);
+    let currentTargetName = afterText.slice(mappedTarget.start, mappedTarget.end);
+
+    if (!isValidEnvironmentName(nextName) || nextName == currentTargetName) {
+      return { handled: false, edits: [] };
+    }
+
+    return {
+      handled: true,
+      edits: [{ start: mappedTarget.start, end: mappedTarget.end, text: nextName }],
+      cursorOffset: mappedTarget.start,
+    };
   }
 
   return { handled: false, edits: [] };
